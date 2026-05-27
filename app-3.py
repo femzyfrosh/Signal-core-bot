@@ -6,11 +6,11 @@ from collections import deque
 
 app = Flask(__name__)
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "PASTE_YOUR_TOKEN_HERE")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8668028976:AAE2u1in1KGr1nRTJbaQXNPeDtMO35unoQ8")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "7411219487")
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "signal123")
-MEXC_API_KEY    = os.environ.get("MEXC_API_KEY",    "PASTE_YOUR_API_KEY_HERE")
-MEXC_API_SECRET = os.environ.get("MEXC_API_SECRET", "PASTE_YOUR_SECRET_KEY_HERE")
+MEXC_API_KEY    = os.environ.get("MEXC_API_KEY",    "mx0vglgGjqnoPDiTFu")
+MEXC_API_SECRET = os.environ.get("MEXC_API_SECRET", "e13578211318499baa3852677365d3cb")
 
 MAX_SIGNALS = 500
 signals     = deque(maxlen=MAX_SIGNALS)
