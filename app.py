@@ -62,13 +62,12 @@ TOP_PAIRS = [
     "AVAX_USDT",  "POPCAT_USDT","ONDO_USDT",  "ARB_USDT",   "RENDER_USDT",
     "FET_USDT",   "OPG_USDT",   "APT_USDT",   "LINK_USDT",  "TAO_USDT",
     "INJ_USDT",   "SEI_USDT",   "HBAR_USDT",  "KAS_USDT",   "NEAR_USDT",
-    "SUI_USDT",   "HYPE_USDT",  "MAT_USDT", "XRP_USDT",   "BAN_USDT",
+    "SUI_USDT",   "HYPE_USDT",  "XRP_USDT",   "BAN_USDT",
 ]
 
 # Some pairs use different contract names on MEXC futures.
 # Map our internal symbol → actual MEXC contract symbol for individual lookups.
 MEXC_SYMBOL_MAP = {
-    "MAT_USDT":      "MATIC_USDT",   # MEXC futures lists Polygon as MATIC
     "BAN_USDT":      "BANANA_USDT",  # BANANA protocol
     "OPG_USDT":      "OP_USDT",      # Optimism
     "GME_USDT":      "GME_USDT",     # GameStop -- try as-is first
@@ -79,9 +78,8 @@ MEXC_SYMBOL_MAP = {
 # Alternative MEXC contract names to attempt when the primary name returns no price.
 # MEXC sometimes prefixes meme coins with 1000 (e.g. 1000BONK) or drops the underscore.
 MEXC_SYMBOL_ALTS = {
-    "GME_USDT":  ["GME_USDT",  "GMEUSDT"],
+    "GME_USDT":  ["GME_USDT", "1000GME_USDT", "GMEUSDT", "1000GMEUSDT"],
     "BONK_USDT": ["BONK_USDT", "1000BONK_USDT", "BONKUSDT"],
-    "MAT_USDT":  ["MATIC_USDT","MAT_USDT",       "MATICUSDT"],
 }
 # Reverse map so we can translate MEXC symbols back to our internal names
 MEXC_SYMBOL_REVERSE = {v: k for k, v in MEXC_SYMBOL_MAP.items()}
@@ -270,7 +268,7 @@ def _fetch_all_tickers_batch():
     """
     Fetch ALL MEXC futures tickers in one request and update price_cache.
     One HTTP call covers all 30 watchlist pairs simultaneously.
-    Handles MEXC contract name aliases (e.g. MATIC_USDT for MAT_USDT).
+    Handles MEXC contract name aliases (e.g. BANANA_USDT for BAN_USDT).
     """
     try:
         r = requests.get(f"{MEXC_BASE}/ticker", timeout=8)
@@ -4413,7 +4411,7 @@ function scoreColor(s){return s>=88?"#fbbf24":s>=75?"#a78bfa":s>=60?"var(--blue)
 function fmt(v){if(v===null||v===undefined||v==="–")return "–";const n=parseFloat(v);if(isNaN(n))return String(v).slice(0,12);if(n>=1000)return n.toLocaleString("en",{maximumFractionDigits:2});if(n>=100)return n.toFixed(2);if(n>=1)return n.toFixed(4);if(n>=0.1)return n.toFixed(5);if(n>=0.01)return n.toFixed(6);if(n>=0.001)return n.toFixed(7);return n.toFixed(8);}
 function fmtP(v){const n=Number(v);if(!n)return"–";if(n>=10000)return"$"+n.toLocaleString(undefined,{maximumFractionDigits:2});if(n>=1)return"$"+n.toFixed(4);return"$"+n.toFixed(6);}
 const TFM={"Day1":"1D","Hour4":"4H","Hour3":"3H","Hour2":"2H","Min60":"1H","Min45":"45m","Min30":"30m","Min15":"15m","Min10":"10m","Min5":"5m","Min4":"4m","Min3":"3m","Min2":"2m","Min1":"1m"};
-const TOP=["PENGU_USDT","GME_USDT","MEME_USDT","RIVER_USDT","DRIFT_USDT","FARTCOIN_USDT","FLOKI_USDT","BONK_USDT","WIF_USDT","PEPE_USDT","AVAX_USDT","POPCAT_USDT","ONDO_USDT","ARB_USDT","RENDER_USDT","FET_USDT","OPG_USDT","APT_USDT","LINK_USDT","TAO_USDT","INJ_USDT","SEI_USDT","HBAR_USDT","KAS_USDT","NEAR_USDT","SUI_USDT","HYPE_USDT","MAT_USDT","XRP_USDT","BAN_USDT"];
+const TOP=["PENGU_USDT","GME_USDT","MEME_USDT","RIVER_USDT","DRIFT_USDT","FARTCOIN_USDT","FLOKI_USDT","BONK_USDT","WIF_USDT","PEPE_USDT","AVAX_USDT","POPCAT_USDT","ONDO_USDT","ARB_USDT","RENDER_USDT","FET_USDT","OPG_USDT","APT_USDT","LINK_USDT","TAO_USDT","INJ_USDT","SEI_USDT","HBAR_USDT","KAS_USDT","NEAR_USDT","SUI_USDT","HYPE_USDT","XRP_USDT","BAN_USDT"];
 async function fetchPrices(){try{const r=await fetch("/api/prices");const data=await r.json();$("pupd").textContent="Updated "+new Date().toLocaleTimeString();const withData=TOP.map(sym=>({sym,d:data[sym]})).filter(x=>x.d);withData.sort((a,b)=>Math.abs(b.d.change)-Math.abs(a.d.change));const top5=withData.slice(0,5);$("pgrid").innerHTML=top5.map(({sym,d})=>{const name=sym.replace("_USDT","");const up=d.change>=0;return`<div class="pc ${up?"up":"dn"}"><div class="pc-sym">${name}/USDT</div><div class="pc-price ${up?"up":"dn"}">${fmtP(d.price)}</div><span class="pc-chg ${up?"up":"dn"}">${up?"▲":"▼"} ${Math.abs(d.change).toFixed(2)}%</span></div>`;}).join("");}catch{}}
 function buildCard(s,idx){const dir=(s.direction||"BUY").toUpperCase();const sc=s.score||0,gr=s.grade||"–";const gc={"A+":"gAp","A":"gA","B":"gB","C":"gC","D":"gD"}[gr]||"gD";const crtTF=TFM[s.tf]||s.tf||"–";const obTF=TFM[s.ob_tf]||s.ob_tf||"–";const isND=s.tf==="Day1";const zt=s.zone_type||s.ob_zone||"–";const isAplus=gr==="A+";const details=(s.details||[]).join("\n");const cf=(ok,l)=>`<span class="cf ${ok?"cf-ok":"cf-no"}">${ok?"✓":"✗"} ${l}</span>`;const cfw=(ok,l)=>`<span class="cf ${ok?"cf-ok":"cf-w"}">${ok?"✓":"⚠"} ${l}</span>`;const cfg=(ok,l)=>`<span class="cf ${ok?"cf-g":"cf-no"}">${ok?"💎":"◇"} ${l}</span>`;
 const barFill=Math.round(sc/100*100);const barColor=sc>=88?"var(--yellow)":sc>=75?"#a78bfa":sc>=60?"var(--blue)":"var(--orange)";
@@ -5932,7 +5930,7 @@ const PAIRS=[
   "AVAX_USDT","POPCAT_USDT","ONDO_USDT","ARB_USDT","RENDER_USDT",
   "FET_USDT","OPG_USDT","APT_USDT","LINK_USDT","TAO_USDT",
   "INJ_USDT","SEI_USDT","HBAR_USDT","KAS_USDT","NEAR_USDT",
-  "SUI_USDT","HYPE_USDT","MAT_USDT","XRP_USDT","BAN_USDT"
+  "SUI_USDT","HYPE_USDT","XRP_USDT","BAN_USDT"
 ];
 
 const TF_LABELS={Min1:"1m",Min2:"2m",Min3:"3m",Min4:"4m",Min5:"5m",Min10:"10m",Min15:"15m",Min30:"30m",Min45:"45m",Min60:"1h",Hour2:"2h",Hour3:"3h",Hour4:"4h",Hour8:"8h",Day1:"1D"};
