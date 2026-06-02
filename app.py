@@ -1150,6 +1150,453 @@ def _build_m1_signal(symbol, direction, trend, crt, tbs_tf, tbs_entry, tbs_sl,
     }
 
 
+# ══════════════════════════════════════════════════════════════════════
+# VISUAL CHART ANALYSIS ENGINE
+# Renders candles to PNG via matplotlib, sends to Claude Vision,
+# returns structured analysis exactly as a trader would read the chart.
+# ══════════════════════════════════════════════════════════════════════
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+# TF label map for chart titles
+_TF_LABEL = {
+    "Day1":"1D","Hour4":"4H","Hour3":"3H","Hour2":"2H","Min60":"1H",
+    "Min45":"45m","Min15":"15m","Min5":"5m","Min4":"4m","Min3":"3m",
+    "Min2":"2m","Min1":"1m",
+}
+
+def _render_chart_image(symbol, candles, tf, zoom="normal"):
+    """
+    Render OHLC candles to a PNG bytes object using matplotlib.
+    zoom = 'out' (200 candles), 'normal' (100), 'in' (50)
+    Returns base64-encoded PNG string.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    import base64, io
+
+    limits = {"out": 200, "normal": 100, "in": 50}
+    n = limits.get(zoom, 100)
+    data = candles[-n:] if len(candles) > n else candles
+    if not data:
+        return None
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    fig.patch.set_facecolor("#0f1117")
+    ax.set_facecolor("#0f1117")
+
+    UP   = "#26a69a"
+    DOWN = "#ef5350"
+    WICK = "#888"
+
+    for i, c in enumerate(data):
+        o, h, l, cl = c["open"], c["high"], c["low"], c["close"]
+        color  = UP if cl >= o else DOWN
+        body_b = min(o, cl)
+        body_h = max(abs(cl - o), (h - l) * 0.01)  # min visible body
+        ax.add_patch(mpatches.Rectangle(
+            (i - 0.35, body_b), 0.7, body_h,
+            color=color, zorder=2
+        ))
+        ax.plot([i, i], [l, h], color=WICK, linewidth=0.8, zorder=1)
+
+    prices = [c["close"] for c in data]
+    p_min, p_max = min(c["low"] for c in data), max(c["high"] for c in data)
+    pad = (p_max - p_min) * 0.06
+    ax.set_xlim(-1, len(data))
+    ax.set_ylim(p_min - pad, p_max + pad)
+
+    # X-axis: show timestamps every ~20 candles
+    step = max(1, len(data) // 10)
+    xticks = list(range(0, len(data), step))
+    xlabels = []
+    for i in xticks:
+        ts = data[i].get("time", 0)
+        if ts > 1e9:
+            dt = datetime.fromtimestamp(ts / 1000 if ts > 1e12 else ts, tz=timezone.utc)
+            xlabels.append(dt.strftime("%m/%d %H:%M"))
+        else:
+            xlabels.append(str(i))
+    ax.set_xticks(xticks)
+    ax.set_xticklabels(xlabels, rotation=30, ha="right", fontsize=7, color="#aaa")
+    ax.tick_params(axis="y", colors="#aaa", labelsize=7)
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#333")
+    ax.grid(axis="y", color="#222", linewidth=0.5)
+
+    tf_label = _TF_LABEL.get(tf, tf)
+    ax.set_title(
+        f"{symbol}  {tf_label}  ({len(data)} candles, zoom={zoom})",
+        color="#eee", fontsize=10, pad=8
+    )
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight",
+                facecolor=fig.get_facecolor(), dpi=120)
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode()
+
+
+def _vision_analyse_chart(symbol, tf, b64_image, task_prompt):
+    """
+    Send a rendered chart image to Claude Vision and get structured analysis.
+    Returns a dict with the parsed response, or None on failure.
+    """
+    if not ANTHROPIC_API_KEY:
+        return None
+    try:
+        headers = {
+            "x-api-key":         ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type":      "application/json",
+        }
+        payload = {
+            "model":      "claude-opus-4-5",
+            "max_tokens": 1200,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type":       "base64",
+                            "media_type": "image/png",
+                            "data":       b64_image,
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": task_prompt
+                    }
+                ]
+            }]
+        }
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers=headers, json=payload, timeout=30
+        )
+        data = r.json()
+        if "content" not in data:
+            log(f"⚠️ Vision API error: {data.get('error', data)}")
+            return None
+        text = "".join(b.get("text","") for b in data["content"] if b.get("type")=="text")
+        # Strip markdown fences if present
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"): text = text[4:]
+        try:
+            return json.loads(text.strip())
+        except Exception:
+            # Return raw text wrapped so callers can still use it
+            return {"raw": text}
+    except Exception as e:
+        log(f"⚠️ Vision analyse error ({symbol} {tf}): {e}")
+        return None
+
+
+def visual_analyse_pair(symbol):
+    """
+    Full top-down visual chart analysis for Mad Man Model #1.
+
+    Workflow:
+      1. Render 4H chart → read 4H bias (PRIMARY — dictates trade direction).
+         CRT setups MUST align with 4H bias.
+      2. Render 1D chart → context only (swing range, key levels, P/D zones).
+         1D bias is informational; 4H bias is what drives the signal direction.
+      3. Step down: 4H → 3H → 2H → 1H — find CRT in alignment with 4H bias.
+      4. LTF (15m/5m/3m/1m) — find TBS candle.
+      5. Returns structured signal dict if complete setup found, else None.
+    """
+    if not ANTHROPIC_API_KEY:
+        return None   # Key not configured — fall back to math analysis
+
+    # ── Step 1: 4H bias (PRIMARY) ─────────────────────────────────────
+    h4_candles = get_candles(symbol, "Hour4", limit=200)
+    if not h4_candles or len(h4_candles) < 20:
+        return None
+
+    b64_4h = _render_chart_image(symbol, h4_candles, "Hour4", zoom="normal")
+    if not b64_4h:
+        return None
+
+    h4_bias_prompt = """You are an expert Smart Money Concepts (SMC) trader reading a 4H candlestick chart.
+
+Analyse this chart and return ONLY a JSON object with these exact keys:
+{
+  "trend": "BULLISH" or "BEARISH" or "NEUTRAL",
+  "last_swing_high": <price number>,
+  "last_swing_low": <price number>,
+  "premium_zone_top": <price>,
+  "premium_zone_bot": <price>,
+  "discount_zone_top": <price>,
+  "discount_zone_bot": <price>,
+  "bias_notes": "<one sentence — what structure confirms the bias>"
+}
+
+Rules:
+- BULLISH: price making Higher Highs AND Higher Lows on 4H
+- BEARISH: price making Lower Highs AND Lower Lows on 4H
+- NEUTRAL: no clear structure
+- premium zone = upper 50% of the last major 4H swing range
+- discount zone = lower 50% of the last major 4H swing range
+Return ONLY the JSON. No explanation, no markdown fences."""
+
+    h4_bias = _vision_analyse_chart(symbol, "Hour4", b64_4h, h4_bias_prompt)
+    if not h4_bias or h4_bias.get("trend") == "NEUTRAL" or "raw" in h4_bias:
+        return None
+
+    trend_4h  = h4_bias["trend"]
+    direction = "BUY" if trend_4h == "BULLISH" else "SELL"
+
+    log(f"👁 Visual 4H bias: {symbol} → {trend_4h} | {h4_bias.get('bias_notes','')}")
+
+    # ── Step 2: 1D context (swing range + key levels) ─────────────────
+    d1_candles = get_candles(symbol, "Day1", limit=200)
+    d1_context = ""
+    bias_notes_1d = ""
+    if d1_candles and len(d1_candles) >= 20:
+        b64_1d = _render_chart_image(symbol, d1_candles, "Day1", zoom="out")
+        if b64_1d:
+            d1_prompt = f"""You are an expert SMC trader. The 4H bias is {trend_4h}.
+
+This is the 1D chart. Read it for context only — identify key levels that the 4H setup could be reacting from.
+
+Return ONLY a JSON object:
+{{
+  "trend_1d": "BULLISH" or "BEARISH" or "NEUTRAL",
+  "key_levels": [
+    {{"type": "OB" or "FVG" or "BB" or "RB", "direction": "BEARISH" or "BULLISH",
+     "top": <price>, "bot": <price>, "notes": "<brief>"}}
+  ],
+  "pd_zone_aligned": true or false,
+  "context_notes": "<one sentence — is 4H in a 1D key zone?>"
+}}
+
+Return ONLY the JSON. No explanation."""
+            d1_data = _vision_analyse_chart(symbol, "Day1", b64_1d, d1_prompt)
+            if d1_data and "raw" not in d1_data:
+                bias_notes_1d = d1_data.get("context_notes", "")
+                log(f"👁 Visual 1D context: {symbol} | {bias_notes_1d}")
+
+    # ── Step 3: CRT hunt — MUST align with 4H bias ────────────────────
+    # 4H bias is the rule — any CRT on 4H/3H/2H/1H must be in the same direction.
+    # SELL setup → look for bearish CRT in premium zone (price reacting from supply)
+    # BUY  setup → look for bullish CRT in discount zone (price reacting from demand)
+    crt_result  = None
+    crt_tf_used = None
+
+    for crt_tf in ["Hour4", "Hour3", "Hour2", "Min60"]:
+        candles = get_candles(symbol, crt_tf, limit=150)
+        if not candles or len(candles) < 20:
+            continue
+
+        zoom   = "in" if crt_tf in ("Hour2", "Min60") else "normal"
+        b64    = _render_chart_image(symbol, candles, crt_tf, zoom=zoom)
+        if not b64:
+            continue
+
+        tf_label   = _TF_LABEL.get(crt_tf, crt_tf)
+        pd_side    = "premium (supply)" if direction == "SELL" else "discount (demand)"
+        sweep_side = "high" if direction == "SELL" else "low"
+
+        crt_prompt = f"""You are an expert SMC trader.
+
+PRIMARY BIAS: 4H is {trend_4h}. You are looking ONLY for {direction} setups.
+All CRT setups must be in alignment with the 4H bias ({trend_4h}).
+Do NOT flag a CRT that goes against the 4H bias.
+
+This is the {tf_label} chart. Look for a CRT (Candle Range Theory) setup
+in the {pd_side} zone — that is, price should be reacting from a {direction} key level
+(OB, FVG, Breaker Block, or Rejection Block) in the {pd_side} zone of the 4H swing.
+
+CRT rules (3-candle formation):
+- C1 (CRT candle): defines the range. CRH = C1 high, CRL = C1 low.
+- C2 (manipulation): sweeps the {sweep_side} of C1 with a WICK only —
+  the BODY (both open AND close) must close BACK INSIDE C1's range.
+  This is the key: wick pokes outside, body stays inside. That's manipulation.
+- C3: confirms direction back into the range.
+
+Important: the CRT must be AT or AFTER price taps a {pd_side} key level.
+If price has recently reacted from a {pd_side} key level, that is valid too.
+
+Return ONLY a JSON object:
+{{
+  "crt_found": true or false,
+  "crt_direction": "{direction}" or null,
+  "c1_high": <price or null>,
+  "c1_low": <price or null>,
+  "c2_swept_side": "HIGH" or "LOW" or null,
+  "c2_manipulation_confirmed": true or false,
+  "aligns_with_4h_bias": true or false,
+  "htf_key_level_tapped": true or false,
+  "key_level_type": "OB" or "FVG" or "BB" or "RB" or null,
+  "key_level_top": <price or null>,
+  "key_level_bot": <price or null>,
+  "zone_name": "<e.g. Bearish OB in 4H Premium>" or null,
+  "notes": "<brief note>"
+}}
+
+Return ONLY the JSON. No explanation."""
+
+        crt_data = _vision_analyse_chart(symbol, crt_tf, b64, crt_prompt)
+        if not crt_data or "raw" in crt_data:
+            continue
+
+        # Strict: CRT must align with 4H bias — reject anything that doesn't
+        if not crt_data.get("aligns_with_4h_bias", False):
+            log(f"⏭ Visual: {symbol} {tf_label} CRT found but doesn't align with 4H {trend_4h} — skipping")
+            continue
+
+        if crt_data.get("crt_found") and crt_data.get("c2_manipulation_confirmed"):
+            crt_result  = crt_data
+            crt_tf_used = crt_tf
+            log(f"👁 Visual CRT ({direction}) confirmed: {symbol} {tf_label} | "
+                f"CRH={crt_data.get('c1_high')} CRL={crt_data.get('c1_low')} | "
+                f"{crt_data.get('notes','')}")
+            break
+        elif crt_data.get("htf_key_level_tapped"):
+            log(f"👁 Visual: {symbol} {tf_label} — key level tapped, no CRT yet, checking lower TF")
+
+    if not crt_result or not crt_tf_used:
+        return None
+
+    crh = crt_result.get("c1_high")
+    crl = crt_result.get("c1_low")
+    if not crh or not crl or crh <= crl:
+        return None
+
+    # ── Step 4: LTF TBS hunt ─────────────────────────────────────────
+    tbs_tfs    = TBS_TF_MAP.get(crt_tf_used, TBS_TFS)
+    tbs_result = None
+    tbs_tf_used = None
+
+    for tbs_tf in tbs_tfs:
+        ltf_candles = get_candles(symbol, tbs_tf, limit=150)
+        if not ltf_candles or len(ltf_candles) < 10:
+            continue
+
+        b64 = _render_chart_image(symbol, ltf_candles, tbs_tf, zoom="in")
+        if not b64:
+            continue
+
+        tf_label    = _TF_LABEL.get(tbs_tf, tbs_tf)
+        close_side  = "above" if direction == "SELL" else "below"
+        close_level = f"CRH ({crh})" if direction == "SELL" else f"CRL ({crl})"
+        open_inside = f"between CRL ({crl}) and CRH ({crh})"
+
+        tbs_prompt = f"""You are an expert SMC trader looking for a TBS (Turtle Body Soup) entry.
+
+Setup direction: {direction} (must align with 4H bias: {trend_4h})
+CRT range from the higher timeframe:
+- CRH (Candle Range High) = {crh}
+- CRL (Candle Range Low)  = {crl}
+
+TBS rules — find the MOST RECENT candle that satisfies ALL of these:
+1. Candle OPENS inside the CRT range ({open_inside})
+2. Candle CLOSES {close_side} {close_level} with its BODY — body fully outside the range.
+   A wick poking outside does NOT count. The body (open-to-close) must close {close_side}.
+3. Body must be meaningful — not a doji or near-doji.
+
+This is the {tf_label} chart.
+
+Return ONLY a JSON object:
+{{
+  "tbs_found": true or false,
+  "tbs_open": <price or null>,
+  "tbs_close": <price or null>,
+  "tbs_body_outside": true or false,
+  "entry": <tbs_open or null>,
+  "sl": <tbs_close or null>,
+  "tp": <{crl} if direction is SELL, or {crh} if direction is BUY>,
+  "notes": "<brief note>"
+}}
+
+Return ONLY the JSON. No explanation."""
+
+        tbs_data = _vision_analyse_chart(symbol, tbs_tf, b64, tbs_prompt)
+        if not tbs_data or "raw" in tbs_data:
+            continue
+
+        if tbs_data.get("tbs_found") and tbs_data.get("tbs_body_outside"):
+            tbs_result  = tbs_data
+            tbs_tf_used = tbs_tf
+            log(f"🐢 Visual TBS: {symbol} {tf_label} | "
+                f"Entry={tbs_data.get('entry')} SL={tbs_data.get('sl')} "
+                f"TP={tbs_data.get('tp')} | {tbs_data.get('notes','')}")
+            break
+
+    if not tbs_result or not tbs_tf_used:
+        return None
+
+    # ── Step 5: Build signal ──────────────────────────────────────────
+    entry = tbs_result.get("entry") or tbs_result.get("tbs_open")
+    sl    = tbs_result.get("sl")    or tbs_result.get("tbs_close")
+    tp    = tbs_result.get("tp")    or (crl if direction == "SELL" else crh)
+
+    if not entry or not sl or not tp:
+        return None
+
+    risk   = abs(float(entry) - float(sl))
+    reward = abs(float(tp)    - float(entry))
+    rr     = round(reward / risk, 2) if risk > 0 else 0
+    if rr < 2.0:
+        log(f"⚠️ Visual signal RR {rr}R too low — skipping {symbol}")
+        return None
+
+    zone_name = crt_result.get("zone_name") or f"{trend_4h} zone · {_TF_LABEL.get(crt_tf_used, crt_tf_used)}"
+    kl_type   = crt_result.get("key_level_type") or "KL"
+    score     = 90 if rr >= 3.0 else 80 if rr >= 2.5 else 70
+    grade     = "A+" if score >= 85 else "A"
+
+    return {
+        "model":       "1",
+        "symbol":      symbol,
+        "tf":          crt_tf_used,
+        "ob_tf":       crt_tf_used,
+        "ob_zone":     zone_name,
+        "zone_type":   kl_type,
+        "direction":   direction,
+        "trend":       trend_4h,
+        "entry":       round(float(entry), 8),
+        "entry_type":  "Model #1 Visual (TBS Open — 4H bias aligned)",
+        "sl":          round(float(sl), 8),
+        "tp":          round(float(tp), 8),
+        "tp1":         round((float(entry) + float(tp)) / 2, 8),
+        "tp2":         round(float(tp), 8),
+        "rr":          rr,
+        "crh":         crh,
+        "crl":         crl,
+        "ob_top":      crt_result.get("key_level_top") or crh,
+        "ob_bot":      crt_result.get("key_level_bot") or crl,
+        "score":       score,
+        "grade":       grade,
+        "details": [
+            f"👁 Visual analysis — bot read the charts directly",
+            f"📊 4H bias: {trend_4h} | {h4_bias.get('bias_notes','')}",
+            f"📊 1D context: {bias_notes_1d}" if bias_notes_1d else "📊 1D: context read",
+            f"✅ CRT on {_TF_LABEL.get(crt_tf_used)}: CRH={crh} CRL={crl}",
+            f"   Zone: {zone_name}",
+            f"🐢 TBS on {_TF_LABEL.get(tbs_tf_used)}: Entry={entry} SL={sl}",
+            f"   TP={tp} | RR:{rr}R",
+        ],
+        "tbs_found":   True,
+        "tbs_tf":      tbs_tf_used,
+        "tbs_entry":   round(float(entry), 8),
+        "tbs_sl":      round(float(sl), 8),
+        "fvg_found":   False, "fvg_type": "–", "fvg_entry": "–",
+        "fvg_top": "–", "fvg_bot": "–",
+        "choch_found": False, "choch_level": "–",
+        "liq_swept":   False, "ob_respected": True, "continuous": True,
+        "from_visual": True,
+        "market_order": True,
+        "timestamp":   datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M UTC+1"),
+    }
+
+
 def scan_pair(symbol):
     """
     Model #1 scanner — new logic:
@@ -1170,35 +1617,36 @@ def scan_pair(symbol):
     """
     results = []
 
-    # ── Step 1: HTF bias — consensus across HTF timeframes ───────────
-    # Per spec: HTF = 1D, 4H, 3H, 2H, 1H. Use 4H as primary; confirm
-    # with 1H and 2H so bias is multi-TF validated.
-    HTF_BIAS_TFS = ["Hour4", "Hour2", "Min60"]
-    trend_votes = {"BULLISH": 0, "BEARISH": 0}
+    # ── Step 1: HTF bias ─────────────────────────────────────────────
+    # Primary: 4H trend (most reliable HTF for crypto).
+    # If 4H is NEUTRAL, fallback to 2H then 1H.
+    # ref_candles / sh / sl always come from whichever TF gave the trend.
+    trend = "NEUTRAL"
     sh, sl = [], []
     ref_candles = None
-    for bias_tf in HTF_BIAS_TFS:
+
+    for bias_tf in ["Hour4", "Hour2", "Min60"]:
         c = get_candles(symbol, bias_tf, limit=200)
         if not c or len(c) < 30:
             continue
         t, _sh, _sl = detect_trend(c)
+        if ref_candles is None:          # always keep first successful fetch
+            ref_candles = c; sh = _sh; sl = _sl
         if t in ("BULLISH", "BEARISH"):
-            trend_votes[t] += 1
-            if bias_tf == "Hour4":   # anchor for swing points
-                ref_candles = c; sh = _sh; sl = _sl
+            trend = t
+            ref_candles = c; sh = _sh; sl = _sl
+            break                        # first clear HTF reading wins
+
     if ref_candles is None:
         diag["no_candles"] += 1; return results
-    # Require at least 2 of 3 HTF TFs to agree
-    if trend_votes["BULLISH"] >= 2:
-        trend = "BULLISH"
-    elif trend_votes["BEARISH"] >= 2:
-        trend = "BEARISH"
-    else:
+    if trend == "NEUTRAL":
         diag["neutral"] += 1; return results
 
-    continuous = is_continuous(sh, sl, trend, min_pts=2)
-    if not continuous:
-        diag["not_continuous"] += 1; return results
+    # is_continuous needs at least 2 swing points; if too few, trust detect_trend alone
+    if sh and sl:
+        continuous = is_continuous(sh, sl, trend, min_pts=2)
+        if not continuous:
+            diag["not_continuous"] += 1; return results
 
     direction = "BUY" if trend == "BULLISH" else "SELL"
 
@@ -2880,8 +3328,22 @@ def scanner_loop():
                     scan_state["current_pair"]=symbol
                     scan_state["pairs_done"]=i+1
                 try:
-                    m1 = scan_pair(symbol)        if scan_settings.get("model1_enabled", True) else []
-                    all_res = m1
+                    # ── Visual analysis first (bot reads charts like a trader) ──
+                    # If ANTHROPIC_API_KEY is set, bot renders each TF chart and
+                    # sends the image to Claude Vision for analysis.
+                    # Falls back to math-based scan_pair if key not set or no signal.
+                    visual_sig = None
+                    if ANTHROPIC_API_KEY and scan_settings.get("model1_enabled", True):
+                        try:
+                            visual_sig = visual_analyse_pair(symbol)
+                        except Exception as ve:
+                            log(f"⚠️ Visual analysis error {symbol}: {ve}")
+
+                    if visual_sig:
+                        all_res = [visual_sig]
+                    else:
+                        m1 = scan_pair(symbol) if scan_settings.get("model1_enabled", True) else []
+                        all_res = m1
                     for sig in all_res:
                         m = sig.get("model","1")
                         recent_sigs = list(signals)[:100]
@@ -2921,7 +3383,7 @@ def scanner_loop():
             with scan_lock: scan_state["last_scan"]=datetime.now(LOCAL_TZ).strftime("%H:%M UTC+1")
             log(f"✅ Scan #{scan_state['scan_count']} complete — {len(pairs)} watchlist pairs | "
                 f"scanned={len(scanned_this_cycle)} unique")
-            log(f"📊 GATES: neutral={diag.get('neutral',0)} no_cont={diag.get('not_continuous',0)} "
+            log(f"📊 GATES: no_candles={diag.get('no_candles',0)} neutral={diag.get('neutral',0)} no_cont={diag.get('not_continuous',0)} "
                 f"not_zone={diag.get('not_in_zone',0)} no_crt={diag.get('no_crts',0)} "
                 f"no_tbs={diag.get('no_tbs',0)} rr_low={diag.get('rr_low',0)} PASSED={diag['passed']}")
             for k in diag: diag[k]=0
@@ -3512,6 +3974,30 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
       </div>
     </div>
     <div class="panel">
+      <div class="panel-ttl">👁 Visual Chart Analysis (AI)</div>
+      <div class="trade-form">
+        <div class="tf-group">
+          <div class="tf-lbl">Anthropic API Key</div>
+          <input class="tf-inp" type="password" id="s-anthropic-key" placeholder="sk-ant-api03-…" autocomplete="off"/>
+          <div style="font-size:.68rem;color:var(--dim);margin-top:4px;font-family:'JetBrains Mono',monospace">
+            Bot renders candle charts &amp; sends them to Claude Vision for analysis —
+            exactly how a trader reads charts. Get your key at console.anthropic.com
+          </div>
+        </div>
+        <div class="tf-group">
+          <div class="tf-lbl">Visual Analysis Mode</div>
+          <label style="display:flex;align-items:center;gap:8px;color:var(--text);font-size:.85rem;cursor:pointer;margin-top:8px">
+            <input type="checkbox" id="s-visual-mode" checked style="width:18px;height:18px;accent-color:#a78bfa"/>
+            🤖 Enable visual chart analysis (bot reads charts like a trader)
+          </label>
+          <div style="font-size:.68rem;color:var(--dim);margin-top:6px;font-family:'JetBrains Mono',monospace">
+            When ON: bot renders 1D→4H→3H→2H→1H charts, zooms in/out, and reads structure visually.
+            When OFF: falls back to math-based OHLC analysis.
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
       <div class="panel-ttl">📢 Telegram Notifications</div>
       <div class="trade-form">
         <div class="tf-group">
@@ -3914,6 +4400,8 @@ async function loadSettings(){
     if(g("s-scan-int"))  g("s-scan-int").value   =d.scan_interval||1;
     if(g("s-cycle-rest"))g("s-cycle-rest").value  =d.cycle_rest||5;
     if(g("s-market-refresh"))g("s-market-refresh").value=d.market_refresh_interval||1;
+    if(g("s-anthropic-key"))g("s-anthropic-key").value=d.anthropic_api_key?"••••••••••••":"";
+    if(g("s-visual-mode"))g("s-visual-mode").checked=!!d.visual_analysis_enabled;
   }catch(e){console.error("loadSettings",e);}
 }
 
@@ -3941,7 +4429,11 @@ window.saveAllSettings=async function(){
     scan_interval:  parseInt((g("s-scan-int")||{}).value)||1,
     cycle_rest:     parseInt((g("s-cycle-rest")||{}).value)||5,
     market_refresh_interval: parseInt((g("s-market-refresh")||{}).value)||10,
+    visual_analysis_enabled: !!(g("s-visual-mode")||{}).checked,
   };
+  // Only update Anthropic key if user typed a new value (not the masked dots)
+  const akVal=(g("s-anthropic-key")||{}).value||"";
+  if(akVal && !akVal.startsWith("•")) payload.anthropic_api_key=akVal;
   const riskVal=parseFloat((g("s-risk")||{}).value);
   if(!isNaN(riskVal)&&riskVal>0) payload.risk_pct=riskVal;
   try{
@@ -4359,6 +4851,15 @@ def api_settings():
                 scan_settings["tg_bot_token"] = str(data["tg_bot_token"]).strip()
             if "tg_chat_id" in data:
                 scan_settings["tg_chat_id"] = str(data["tg_chat_id"]).strip()
+            if "visual_analysis_enabled" in data:
+                scan_settings["visual_analysis_enabled"] = bool(data["visual_analysis_enabled"])
+            if "anthropic_api_key" in data and str(data["anthropic_api_key"]).strip():
+                new_key = str(data["anthropic_api_key"]).strip()
+                scan_settings["anthropic_api_key"] = new_key
+                # Update the global so visual_analyse_pair picks it up immediately
+                global ANTHROPIC_API_KEY
+                ANTHROPIC_API_KEY = new_key
+                log("🔑 Anthropic API key updated — visual chart analysis active")
         with trade_lock:
             if "api_key" in data and str(data["api_key"]).strip():
                 trade_config["api_key"] = str(data["api_key"]).strip()
@@ -4376,6 +4877,8 @@ def api_settings():
         out["risk_pct"] = trade_config.get("risk_pct", 1.0)
         sec = trade_config.get("api_secret","")
     out["model1_enabled"] = scan_settings.get("model1_enabled", True)
+    out["visual_analysis_enabled"] = scan_settings.get("visual_analysis_enabled", True)
+    out["anthropic_api_key"] = "set" if ANTHROPIC_API_KEY else ""
     out["api_secret_masked"] = (sec[:4] + "●●●●●●●●●●●●●●●●") if len(sec) > 4 else ("●" * len(sec))
     out["api_secret_set"] = bool(sec)
     return jsonify(out)
