@@ -4377,6 +4377,9 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 .detbox.open{display:block}
 .panel{background:var(--s1);border:2px solid var(--border);border-radius:18px;padding:20px;margin-bottom:14px}
 .panel-ttl{font-family:'Fredoka One',sans-serif;font-size:1rem;letter-spacing:.05em;color:#a78bfa;margin-bottom:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.news-src-btn{padding:6px 14px;border:1.5px solid var(--muted);border-radius:20px;background:transparent;color:var(--dim);font-family:'Nunito',sans-serif;font-size:.75rem;font-weight:700;cursor:pointer;transition:all .18s;white-space:nowrap;flex-shrink:0}
+.news-src-btn:hover{border-color:rgba(124,58,237,.4);color:var(--text)}
+.news-src-btn.active{background:rgba(124,58,237,.15);border-color:rgba(124,58,237,.5);color:#a78bfa}
 .tbl{width:100%;border-collapse:collapse}
 .tbl th{font-family:'JetBrains Mono',monospace;font-size:.56rem;color:var(--dim);letter-spacing:.07em;text-transform:uppercase;padding:7px 9px;text-align:left;border-bottom:1.5px solid var(--border)}
 .tbl td{font-family:'JetBrains Mono',monospace;font-size:.68rem;padding:8px 9px;border-bottom:1px solid rgba(124,58,237,.07);vertical-align:middle}
@@ -4815,25 +4818,23 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 
   <!-- ══ PAGE: NEWS ══ -->
   <div id="page-news" class="page">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-      <div style="font-family:'Fredoka One',sans-serif;font-size:1.15rem;letter-spacing:.06em;color:#e2e8f0">📰 Crypto News Center</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select id="news-filter" onchange="filterNews()" style="background:var(--s2);border:1.5px solid var(--muted);border-radius:10px;color:var(--text);padding:7px 12px;font-family:'Nunito',sans-serif;font-size:.8rem;font-weight:700;outline:none">
-          <option value="">All News</option>
-          <option value="bullish">🟢 Bullish</option>
-          <option value="bearish">🔴 Bearish</option>
-          <option value="neutral">⚪ Neutral</option>
-          <option value="hot">🔥 Hot</option>
-        </select>
-        <button onclick="loadNews(true)" style="padding:7px 16px;border:1.5px solid rgba(124,58,237,.4);border-radius:10px;background:rgba(124,58,237,.1);color:#a78bfa;font-family:'Nunito',sans-serif;font-size:.8rem;font-weight:800;cursor:pointer">🔄 Refresh</button>
-      </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px">
+      <div style="font-family:'Fredoka One',sans-serif;font-size:1.15rem;letter-spacing:.06em;color:#e2e8f0">📰 Crypto News</div>
+      <button onclick="loadNews(true)" style="padding:7px 16px;border:1.5px solid rgba(124,58,237,.4);border-radius:10px;background:rgba(124,58,237,.1);color:#a78bfa;font-family:'Nunito',sans-serif;font-size:.8rem;font-weight:800;cursor:pointer">🔄 Refresh</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px">
+      <button class="news-src-btn active" onclick="setNewsSrc('all',this)">All</button>
+      <button class="news-src-btn" onclick="setNewsSrc('cryptocompare',this)">CryptoCompare</button>
+      <button class="news-src-btn" onclick="setNewsSrc('cointelegraph',this)">CoinTelegraph</button>
+      <button class="news-src-btn" onclick="setNewsSrc('coindesk',this)">CoinDesk</button>
+      <button class="news-src-btn" onclick="setNewsSrc('decrypt',this)">Decrypt</button>
     </div>
     <div id="news-status" style="font-family:'JetBrains Mono',monospace;font-size:.62rem;color:var(--dim);margin-bottom:10px;display:none"></div>
     <div id="news-list" style="display:flex;flex-direction:column;gap:10px">
       <div class="empty" style="padding:60px 20px">
         <div class="empty-ico">📡</div>
         <div class="empty-t">Loading news...</div>
-        <div class="empty-s">Fetching from CryptoPanic, CoinGecko & CryptoCompare</div>
+        <div class="empty-s">Tap the News tab to fetch latest crypto headlines</div>
       </div>
     </div>
   </div>
@@ -5230,68 +5231,147 @@ window.clearAllSignals=async function(){
   }catch{allSigs=[];lastCount=0;renderSigs();toast("🗑 Cleared (local)","sell",2000);}
 };
 
-// ── News Center ──────────────────────────────────────────────────────
+// ── News Center (client-side fetch — bypasses Railway egress proxy) ──
+// Uses rss2json.com (free CORS-enabled RSS→JSON) + CryptoCompare public API
 let _newsData=[];
-async function loadNews(force=false){
-  const list=$("news-list");const status=$("news-status");
-  if(!list)return;
-  if(!_newsData.length||force){
-    list.innerHTML='<div class="empty" style="padding:60px 20px"><div class="empty-ico">📡</div><div class="empty-t">Loading news...</div><div class="empty-s">Fetching from CryptoPanic, CoinGecko & CryptoCompare</div></div>';
-  }
+let _newsSrc='all';
+let _newsLoaded=false;
+
+// RSS feeds via rss2json.com — free tier, 10 req/hour, returns JSON with CORS
+const NEWS_FEEDS=[
+  {key:'cointelegraph', label:'CoinTelegraph', url:'https://cointelegraph.com/rss'},
+  {key:'coindesk',      label:'CoinDesk',      url:'https://www.coindesk.com/arc/outboundfeeds/rss/'},
+  {key:'decrypt',       label:'Decrypt',        url:'https://decrypt.co/feed'},
+  {key:'newsbtc',       label:'NewsBTC',        url:'https://www.newsbtc.com/feed/'},
+  {key:'bitcoinist',    label:'Bitcoinist',     url:'https://bitcoinist.com/feed/'},
+  {key:'ambcrypto',     label:'AMBCrypto',      url:'https://ambcrypto.com/feed/'},
+];
+
+async function _fetchRSS(feed){
   try{
-    const r=await fetch("/api/news");
+    const apiUrl='https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(feed.url)+'&count=15';
+    const r=await fetch(apiUrl,{signal:AbortSignal.timeout(8000)});
+    if(!r.ok)return[];
     const d=await r.json();
-    _newsData=d.items||[];
-    if(status){
-      status.style.display="block";
-      status.textContent=`${_newsData.length} articles · ${d.cached?"Cached":"Live"} · Updated ${new Date().toLocaleTimeString()}`;
-    }
-    renderNews();
-  }catch(e){
-    list.innerHTML='<div class="empty" style="padding:60px 20px"><div class="empty-ico">❌</div><div class="empty-t">Failed to load news</div><div class="empty-s">Check your connection and try again</div></div>';
-  }
+    if(d.status!=='ok'||!d.items)return[];
+    return d.items.map(item=>({
+      title:   (item.title||'').trim(),
+      url:     item.link||item.guid||'',
+      source:  d.feed?.title||feed.label,
+      srcKey:  feed.key,
+      published: item.pubDate||'',
+      description: (item.description||'').replace(/<[^>]*>/g,'').slice(0,140),
+    }));
+  }catch{return[];}
 }
-function filterNews(){renderNews();}
-function renderNews(){
-  const list=$("news-list");
+
+async function _fetchCryptoCompare(){
+  // CryptoCompare public news endpoint has CORS headers — direct browser fetch works
+  try{
+    const r=await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest',{
+      signal:AbortSignal.timeout(8000),
+      headers:{'Authorization':''}
+    });
+    if(!r.ok)return[];
+    const d=await r.json();
+    return(d.Data||[]).slice(0,20).map(item=>{
+      const ts=item.published_on||0;
+      const pub=ts?new Date(ts*1000).toISOString():'';
+      return{
+        title:   (item.title||'').trim(),
+        url:     item.url||'',
+        source:  item.source_info?.name||item.source||'CryptoCompare',
+        srcKey:  'cryptocompare',
+        published: pub,
+        description: (item.body||'').slice(0,140),
+        categories: (item.categories||'').split('|').filter(Boolean).slice(0,3).join(' · '),
+      };
+    });
+  }catch{return[];}
+}
+
+function setNewsSrc(src,btn){
+  _newsSrc=src;
+  document.querySelectorAll('.news-src-btn').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  renderNews();
+}
+
+async function loadNews(force=false){
+  const list=$('news-list');const status=$('news-status');
   if(!list)return;
-  const flt=($("news-filter")||{}).value||"";
+  if(_newsLoaded&&!force){renderNews();return;}
+  list.innerHTML='<div class="empty" style="padding:60px 20px"><div class="empty-ico">📡</div><div class="empty-t">Fetching latest news...</div><div class="empty-s">Loading from CryptoCompare, CoinTelegraph, CoinDesk & more</div></div>';
+
+  // Fire all fetches in parallel
+  const results=await Promise.allSettled([
+    _fetchCryptoCompare(),
+    ...(NEWS_FEEDS.map(f=>_fetchRSS(f)))
+  ]);
+
+  const all=[];
+  const seen=new Set();
+  for(const r of results){
+    if(r.status==='fulfilled'){
+      for(const item of r.value){
+        if(item.title&&!seen.has(item.title)){seen.add(item.title);all.push(item);}
+      }
+    }
+  }
+
+  // Sort newest first
+  all.sort((a,b)=>{
+    try{return new Date(b.published)-new Date(a.published);}catch{return 0;}
+  });
+
+  _newsData=all;
+  _newsLoaded=true;
+
+  if(status){
+    status.style.display='block';
+    status.textContent=`${all.length} articles · Updated ${new Date().toLocaleTimeString()}`;
+  }
+  renderNews();
+}
+
+function renderNews(){
+  const list=$('news-list');
+  if(!list)return;
   let items=_newsData.slice();
-  if(flt)items=items.filter(n=>n.sentiment===flt||(flt==="hot"&&n.tag==="hot"));
+  if(_newsSrc&&_newsSrc!=='all')items=items.filter(n=>n.srcKey===_newsSrc);
   if(!items.length){
-    list.innerHTML='<div class="empty" style="padding:60px 20px"><div class="empty-ico">🔍</div><div class="empty-t">No news found</div><div class="empty-s">Try a different filter</div></div>';
+    if(!_newsLoaded)loadNews();
+    else list.innerHTML='<div class="empty" style="padding:60px 20px"><div class="empty-ico">🔍</div><div class="empty-t">No articles found</div><div class="empty-s">Try another source or refresh</div></div>';
     return;
   }
-  const sentColor={bullish:"var(--green)",bearish:"var(--red)",neutral:"var(--dim)"};
-  const sentIco={bullish:"🟢",bearish:"🔴",neutral:"⚪"};
   list.innerHTML=items.map(n=>{
-    const hot=n.tag==="hot"?'<span style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);color:var(--red);border-radius:6px;padding:2px 7px;font-size:.58rem;font-family:\'JetBrains Mono\',monospace;font-weight:700">🔥 HOT</span>':'';
-    const snt=n.sentiment||"neutral";
-    const sntTag=`<span style="background:rgba(124,58,237,.1);border:1px solid rgba(124,58,237,.2);color:${sentColor[snt]||"var(--dim)"};border-radius:6px;padding:2px 7px;font-size:.58rem;font-family:\'JetBrains Mono\',monospace;font-weight:700">${sentIco[snt]||"⚪"} ${snt.toUpperCase()}</span>`;
-    const votes=n.votes_pos||n.votes_neg?`<span style="font-family:\'JetBrains Mono\',monospace;font-size:.6rem;color:var(--dim)">👍${n.votes_pos||0} 👎${n.votes_neg||0}</span>`:"";
-    const pubRaw=n.published||"";
-    let pub="";
-    if(pubRaw){try{pub=timeSince(pubRaw);}catch{pub="";}}
-    const srcLabel=n.source?`<span style="color:var(--dim);font-family:\'JetBrains Mono\',monospace;font-size:.6rem">${escHtml(n.source)}</span>`:"";
-    const cats=n.categories?`<span style="color:rgba(124,58,237,.7);font-family:\'JetBrains Mono\',monospace;font-size:.58rem">${escHtml(n.categories.split(",").slice(0,3).join(" · "))}</span>`:"";
-    return`<a href="${n.url||"#"}" target="_blank" rel="noopener noreferrer" style="display:block;background:var(--s1);border:2px solid var(--border);border-radius:16px;padding:14px 15px;text-decoration:none;transition:all .2s;cursor:pointer" onmouseover="this.style.borderColor='rgba(124,58,237,.45)';this.style.background='var(--s2)'" onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--s1)'">
-      <div style="font-family:\'Nunito\',sans-serif;font-size:.9rem;font-weight:800;color:var(--text);line-height:1.45;margin-bottom:8px">${escHtml(n.title)}</div>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        ${sntTag}${hot}${srcLabel}${cats}${votes}
-        ${pub?`<span style="color:var(--dim);font-family:\'JetBrains Mono\',monospace;font-size:.58rem;margin-left:auto">${pub}</span>`:""}
+    const pub=n.published?timeSince(n.published):'';
+    const desc=n.description?`<div style="font-size:.75rem;color:var(--dim);line-height:1.5;margin-top:5px;font-family:'Nunito',sans-serif">${escHtml(n.description.trim())}…</div>`:'';
+    const cats=n.categories?`<span style="color:rgba(124,58,237,.7);font-family:'JetBrains Mono',monospace;font-size:.55rem">${escHtml(n.categories)}</span>`:'';
+    return`<a href="${n.url||'#'}" target="_blank" rel="noopener noreferrer" style="display:block;background:var(--s1);border:2px solid var(--border);border-radius:16px;padding:14px 15px;text-decoration:none;transition:border-color .18s,background .18s" onmouseover="this.style.borderColor='rgba(124,58,237,.45)';this.style.background='var(--s2)'" onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--s1)'">
+      <div style="font-family:'Nunito',sans-serif;font-size:.88rem;font-weight:800;color:var(--text);line-height:1.45">${escHtml(n.title)}</div>
+      ${desc}
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <span style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:.58rem;font-family:'JetBrains Mono',monospace;color:var(--dim)">${escHtml(n.source)}</span>
+        ${cats}
+        ${pub?`<span style="font-family:'JetBrains Mono',monospace;font-size:.58rem;color:var(--dim);margin-left:auto">${pub}</span>`:''}
       </div>
     </a>`;
-  }).join("");
+  }).join('');
 }
+
 function timeSince(dateStr){
-  const d=new Date(dateStr);const now=new Date();const s=Math.floor((now-d)/1000);
-  if(s<60)return`${s}s ago`;
-  const m=Math.floor(s/60);if(m<60)return`${m}m ago`;
-  const h=Math.floor(m/60);if(h<24)return`${h}h ago`;
-  return`${Math.floor(h/24)}d ago`;
+  try{
+    const d=new Date(dateStr);const now=new Date();const s=Math.floor((now-d)/1000);
+    if(isNaN(s)||s<0)return'';
+    if(s<60)return`${s}s ago`;
+    const m=Math.floor(s/60);if(m<60)return`${m}m ago`;
+    const h=Math.floor(m/60);if(h<24)return`${h}h ago`;
+    return`${Math.floor(h/24)}d ago`;
+  }catch{return'';}
 }
 function escHtml(str){
-  return(str||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  return(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // Legacy sw() alias — keep for any code that still calls it
