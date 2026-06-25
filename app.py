@@ -31,6 +31,11 @@ MAX_SIGNALS = 500
 signals     = deque(maxlen=MAX_SIGNALS)
 sessions    = set()
 
+# ── NEWS CACHE ────────────────────────────────────────────────────────
+_news_cache      = {"items": [], "fetched_at": 0}
+_news_cache_lock = threading.Lock()
+NEWS_CACHE_TTL   = 300   # 5 minutes
+
 # ── GLOBAL SETTINGS (editable from Settings page) ─────────────────────
 scan_settings = {
     "price_interval":        1,
@@ -4807,6 +4812,31 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
       <div class="log-body" id="lbody"><div style="color:rgba(56,189,248,.5);font-style:italic">Waiting for log entries... Scanner logs appear here in real-time.</div></div>
     </div>
   </div>
+
+  <!-- ══ PAGE: NEWS ══ -->
+  <div id="page-news" class="page">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+      <div style="font-family:'Fredoka One',sans-serif;font-size:1.15rem;letter-spacing:.06em;color:#e2e8f0">📰 Crypto News Center</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="news-filter" onchange="filterNews()" style="background:var(--s2);border:1.5px solid var(--muted);border-radius:10px;color:var(--text);padding:7px 12px;font-family:'Nunito',sans-serif;font-size:.8rem;font-weight:700;outline:none">
+          <option value="">All News</option>
+          <option value="bullish">🟢 Bullish</option>
+          <option value="bearish">🔴 Bearish</option>
+          <option value="neutral">⚪ Neutral</option>
+          <option value="hot">🔥 Hot</option>
+        </select>
+        <button onclick="loadNews(true)" style="padding:7px 16px;border:1.5px solid rgba(124,58,237,.4);border-radius:10px;background:rgba(124,58,237,.1);color:#a78bfa;font-family:'Nunito',sans-serif;font-size:.8rem;font-weight:800;cursor:pointer">🔄 Refresh</button>
+      </div>
+    </div>
+    <div id="news-status" style="font-family:'JetBrains Mono',monospace;font-size:.62rem;color:var(--dim);margin-bottom:10px;display:none"></div>
+    <div id="news-list" style="display:flex;flex-direction:column;gap:10px">
+      <div class="empty" style="padding:60px 20px">
+        <div class="empty-ico">📡</div>
+        <div class="empty-t">Loading news...</div>
+        <div class="empty-s">Fetching from CryptoPanic, CoinGecko & CryptoCompare</div>
+      </div>
+    </div>
+  </div>
 </div>
 <!-- ══ BOTTOM NAV ══ -->
 <nav class="bottom-nav">
@@ -4830,6 +4860,10 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
     <button class="bnav-btn" id="bnav-settings" onclick="swPage('settings',this)">
       <div class="bnav-ico">⚙️</div>
       <span class="bnav-lbl">Settings</span>
+    </button>
+    <button class="bnav-btn" id="bnav-news" onclick="swPage('news',this)">
+      <div class="bnav-ico">📰</div>
+      <span class="bnav-lbl">News</span>
     </button>
   </div>
 </nav>
@@ -5170,13 +5204,14 @@ window.swPage=function(page,btn){
   activePage=page;
   document.querySelectorAll(".bnav-btn").forEach(b=>b.classList.remove("active"));
   if(btn)btn.classList.add("active");
-  ["home","signals","trade","market","settings"].forEach(p=>{
+  ["home","signals","trade","market","settings","news"].forEach(p=>{
     const el=$("page-"+p);if(el)el.classList.toggle("active",p===page);
   });
   if(page==="market"){const fr=$("market-iframe");if(fr&&!fr.getAttribute("src"))fr.src="/market";}
   if(page==="signals"){fetchMonitor();}
   if(page==="trade"){loadTradeConfig();syncModelToggles();window.fetchPnl();}
   if(page==="settings"){loadSettings();fetchLog();fetchDiag();}
+  if(page==="news"){loadNews();}
 };
 
 // ── Signal discard/clear ──────────────────────────────────────────────
@@ -5194,6 +5229,70 @@ window.clearAllSignals=async function(){
     toast("🗑 All signals cleared","sell",2000);
   }catch{allSigs=[];lastCount=0;renderSigs();toast("🗑 Cleared (local)","sell",2000);}
 };
+
+// ── News Center ──────────────────────────────────────────────────────
+let _newsData=[];
+async function loadNews(force=false){
+  const list=$("news-list");const status=$("news-status");
+  if(!list)return;
+  if(!_newsData.length||force){
+    list.innerHTML='<div class="empty" style="padding:60px 20px"><div class="empty-ico">📡</div><div class="empty-t">Loading news...</div><div class="empty-s">Fetching from CryptoPanic, CoinGecko & CryptoCompare</div></div>';
+  }
+  try{
+    const r=await fetch("/api/news");
+    const d=await r.json();
+    _newsData=d.items||[];
+    if(status){
+      status.style.display="block";
+      status.textContent=`${_newsData.length} articles · ${d.cached?"Cached":"Live"} · Updated ${new Date().toLocaleTimeString()}`;
+    }
+    renderNews();
+  }catch(e){
+    list.innerHTML='<div class="empty" style="padding:60px 20px"><div class="empty-ico">❌</div><div class="empty-t">Failed to load news</div><div class="empty-s">Check your connection and try again</div></div>';
+  }
+}
+function filterNews(){renderNews();}
+function renderNews(){
+  const list=$("news-list");
+  if(!list)return;
+  const flt=($("news-filter")||{}).value||"";
+  let items=_newsData.slice();
+  if(flt)items=items.filter(n=>n.sentiment===flt||(flt==="hot"&&n.tag==="hot"));
+  if(!items.length){
+    list.innerHTML='<div class="empty" style="padding:60px 20px"><div class="empty-ico">🔍</div><div class="empty-t">No news found</div><div class="empty-s">Try a different filter</div></div>';
+    return;
+  }
+  const sentColor={bullish:"var(--green)",bearish:"var(--red)",neutral:"var(--dim)"};
+  const sentIco={bullish:"🟢",bearish:"🔴",neutral:"⚪"};
+  list.innerHTML=items.map(n=>{
+    const hot=n.tag==="hot"?'<span style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);color:var(--red);border-radius:6px;padding:2px 7px;font-size:.58rem;font-family:\'JetBrains Mono\',monospace;font-weight:700">🔥 HOT</span>':'';
+    const snt=n.sentiment||"neutral";
+    const sntTag=`<span style="background:rgba(124,58,237,.1);border:1px solid rgba(124,58,237,.2);color:${sentColor[snt]||"var(--dim)"};border-radius:6px;padding:2px 7px;font-size:.58rem;font-family:\'JetBrains Mono\',monospace;font-weight:700">${sentIco[snt]||"⚪"} ${snt.toUpperCase()}</span>`;
+    const votes=n.votes_pos||n.votes_neg?`<span style="font-family:\'JetBrains Mono\',monospace;font-size:.6rem;color:var(--dim)">👍${n.votes_pos||0} 👎${n.votes_neg||0}</span>`:"";
+    const pubRaw=n.published||"";
+    let pub="";
+    if(pubRaw){try{pub=timeSince(pubRaw);}catch{pub="";}}
+    const srcLabel=n.source?`<span style="color:var(--dim);font-family:\'JetBrains Mono\',monospace;font-size:.6rem">${escHtml(n.source)}</span>`:"";
+    const cats=n.categories?`<span style="color:rgba(124,58,237,.7);font-family:\'JetBrains Mono\',monospace;font-size:.58rem">${escHtml(n.categories.split(",").slice(0,3).join(" · "))}</span>`:"";
+    return`<a href="${n.url||"#"}" target="_blank" rel="noopener noreferrer" style="display:block;background:var(--s1);border:2px solid var(--border);border-radius:16px;padding:14px 15px;text-decoration:none;transition:all .2s;cursor:pointer" onmouseover="this.style.borderColor='rgba(124,58,237,.45)';this.style.background='var(--s2)'" onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--s1)'">
+      <div style="font-family:\'Nunito\',sans-serif;font-size:.9rem;font-weight:800;color:var(--text);line-height:1.45;margin-bottom:8px">${escHtml(n.title)}</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        ${sntTag}${hot}${srcLabel}${cats}${votes}
+        ${pub?`<span style="color:var(--dim);font-family:\'JetBrains Mono\',monospace;font-size:.58rem;margin-left:auto">${pub}</span>`:""}
+      </div>
+    </a>`;
+  }).join("");
+}
+function timeSince(dateStr){
+  const d=new Date(dateStr);const now=new Date();const s=Math.floor((now-d)/1000);
+  if(s<60)return`${s}s ago`;
+  const m=Math.floor(s/60);if(m<60)return`${m}m ago`;
+  const h=Math.floor(m/60);if(h<24)return`${h}h ago`;
+  return`${Math.floor(h/24)}d ago`;
+}
+function escHtml(str){
+  return(str||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
 
 // Legacy sw() alias — keep for any code that still calls it
 window.sw=function(tab,btn){
@@ -5839,6 +5938,127 @@ def api_paper_close():
     if not symbol: return jsonify({"ok":False,"message":"symbol required"}),400
     ok, msg = close_paper_trade(symbol, reason="Manual (Dashboard)")
     return jsonify({"ok":ok,"message":msg})
+
+@app.route("/api/news")
+def api_news():
+    """
+    Aggregated crypto news from multiple free sources:
+      1. CryptoPanic (public feed, no key needed)
+      2. CoinGecko /news endpoint
+      3. CryptoCompare latest news (no key for public tier)
+    Results cached for NEWS_CACHE_TTL seconds to avoid hammering APIs.
+    """
+    global _news_cache
+    with _news_cache_lock:
+        age = time.time() - _news_cache["fetched_at"]
+        if age < NEWS_CACHE_TTL and _news_cache["items"]:
+            return jsonify({"ok": True, "items": _news_cache["items"], "cached": True})
+
+    items = []
+    seen_titles = set()
+
+    # ── Source 1: CryptoPanic public feed ────────────────────────────
+    try:
+        r = requests.get(
+            "https://cryptopanic.com/api/free/v1/posts/",
+            params={"auth_token": "free", "public": "true", "kind": "news", "filter": "hot"},
+            timeout=8, headers={"User-Agent": "Mozilla/5.0 SignalCore/1.0"}
+        )
+        data = r.json()
+        for post in (data.get("results") or [])[:20]:
+            title = (post.get("title") or "").strip()
+            if not title or title in seen_titles: continue
+            seen_titles.add(title)
+            items.append({
+                "title":     title,
+                "url":       post.get("url") or post.get("source", {}).get("url",""),
+                "source":    post.get("source", {}).get("title", "CryptoPanic"),
+                "published": post.get("published_at",""),
+                "votes_pos": (post.get("votes") or {}).get("positive", 0),
+                "votes_neg": (post.get("votes") or {}).get("negative", 0),
+                "sentiment": _news_sentiment(post.get("votes") or {}),
+                "tag":       "hot",
+            })
+    except Exception as e:
+        log(f"⚠️ CryptoPanic news error: {e}")
+
+    # ── Source 2: CoinGecko news ──────────────────────────────────────
+    try:
+        r2 = requests.get(
+            "https://api.coingecko.com/api/v3/news",
+            params={"per_page": 20},
+            timeout=8, headers={"User-Agent": "Mozilla/5.0 SignalCore/1.0"}
+        )
+        data2 = r2.json()
+        for post in (data2 if isinstance(data2, list) else data2.get("data", []))[:20]:
+            title = (post.get("title") or post.get("name") or "").strip()
+            if not title or title in seen_titles: continue
+            seen_titles.add(title)
+            items.append({
+                "title":     title,
+                "url":       post.get("url") or post.get("link",""),
+                "source":    post.get("author") or "CoinGecko",
+                "published": post.get("updated_at") or post.get("created_at",""),
+                "votes_pos": 0,
+                "votes_neg": 0,
+                "sentiment": "neutral",
+                "tag":       "coingecko",
+            })
+    except Exception as e:
+        log(f"⚠️ CoinGecko news error: {e}")
+
+    # ── Source 3: CryptoCompare latest news ──────────────────────────
+    try:
+        r3 = requests.get(
+            "https://min-api.cryptocompare.com/data/v2/news/",
+            params={"lang": "EN", "categories": "BTC,ETH,Trading,Altcoin,ICO,Regulation", "sortOrder": "latest"},
+            timeout=8, headers={"User-Agent": "Mozilla/5.0 SignalCore/1.0"}
+        )
+        data3 = r3.json()
+        for post in (data3.get("Data") or [])[:20]:
+            title = (post.get("title") or "").strip()
+            if not title or title in seen_titles: continue
+            seen_titles.add(title)
+            published_ts = post.get("published_on", 0)
+            pub_str = datetime.fromtimestamp(published_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if published_ts else ""
+            items.append({
+                "title":     title,
+                "url":       post.get("url",""),
+                "source":    post.get("source_info", {}).get("name", post.get("source","")),
+                "published": pub_str,
+                "votes_pos": post.get("upvotes", 0),
+                "votes_neg": post.get("downvotes", 0),
+                "sentiment": "bullish" if (post.get("upvotes",0) or 0) > (post.get("downvotes",0) or 0) else "neutral",
+                "tag":       "latest",
+                "img":       post.get("imageurl",""),
+                "categories": post.get("categories",""),
+            })
+    except Exception as e:
+        log(f"⚠️ CryptoCompare news error: {e}")
+
+    # ── Sort by newest first, cap at 60 items ─────────────────────────
+    def _pub_key(item):
+        try:
+            return item.get("published","") or ""
+        except:
+            return ""
+    items.sort(key=_pub_key, reverse=True)
+    items = items[:60]
+
+    with _news_cache_lock:
+        _news_cache["items"]      = items
+        _news_cache["fetched_at"] = time.time()
+
+    return jsonify({"ok": True, "items": items, "cached": False})
+
+
+def _news_sentiment(votes):
+    pos = votes.get("positive", 0) or 0
+    neg = votes.get("negative", 0) or 0
+    if pos > neg * 1.5:   return "bullish"
+    if neg > pos * 1.5:   return "bearish"
+    return "neutral"
+
 
 @app.route("/api/paper-reset", methods=["POST"])
 def api_paper_reset():
