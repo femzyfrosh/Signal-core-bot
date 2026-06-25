@@ -5231,62 +5231,99 @@ window.clearAllSignals=async function(){
   }catch{allSigs=[];lastCount=0;renderSigs();toast("🗑 Cleared (local)","sell",2000);}
 };
 
-// ── News Center (client-side fetch — bypasses Railway egress proxy) ──
-// Uses rss2json.com (free CORS-enabled RSS→JSON) + CryptoCompare public API
+// ── News Center ────────────────────────────────────────────────────────
+// All fetching is client-side (browser→API) — bypasses Railway egress proxy.
+// Strategy: parse RSS feeds directly using allorigins.win as CORS proxy (no key needed).
+// Fallback: CoinGecko /news (truly free, CORS enabled).
 let _newsData=[];
 let _newsSrc='all';
 let _newsLoaded=false;
 
-// RSS feeds via rss2json.com — free tier, 10 req/hour, returns JSON with CORS
-const NEWS_FEEDS=[
-  {key:'cointelegraph', label:'CoinTelegraph', url:'https://cointelegraph.com/rss'},
-  {key:'coindesk',      label:'CoinDesk',      url:'https://www.coindesk.com/arc/outboundfeeds/rss/'},
-  {key:'decrypt',       label:'Decrypt',        url:'https://decrypt.co/feed'},
-  {key:'newsbtc',       label:'NewsBTC',        url:'https://www.newsbtc.com/feed/'},
-  {key:'bitcoinist',    label:'Bitcoinist',     url:'https://bitcoinist.com/feed/'},
-  {key:'ambcrypto',     label:'AMBCrypto',      url:'https://ambcrypto.com/feed/'},
+const _NEWS_FEEDS=[
+  {key:'cointelegraph', label:'CoinTelegraph', rss:'https://cointelegraph.com/rss'},
+  {key:'coindesk',      label:'CoinDesk',      rss:'https://www.coindesk.com/arc/outboundfeeds/rss/'},
+  {key:'decrypt',       label:'Decrypt',        rss:'https://decrypt.co/feed'},
+  {key:'newsbtc',       label:'NewsBTC',        rss:'https://www.newsbtc.com/feed/'},
+  {key:'bitcoinist',    label:'Bitcoinist',     rss:'https://bitcoinist.com/feed/'},
 ];
 
-async function _fetchRSS(feed){
+// Parse an RSS XML string into article objects
+function _parseRSS(xmlStr, srcKey, srcLabel){
   try{
-    const apiUrl='https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(feed.url)+'&count=15';
-    const r=await fetch(apiUrl,{signal:AbortSignal.timeout(8000)});
-    if(!r.ok)return[];
-    const d=await r.json();
-    if(d.status!=='ok'||!d.items)return[];
-    return d.items.map(item=>({
-      title:   (item.title||'').trim(),
-      url:     item.link||item.guid||'',
-      source:  d.feed?.title||feed.label,
-      srcKey:  feed.key,
-      published: item.pubDate||'',
-      description: (item.description||'').replace(/<[^>]*>/g,'').slice(0,140),
-    }));
+    const parser=new DOMParser();
+    const doc=parser.parseFromString(xmlStr,'application/xml');
+    const items=Array.from(doc.querySelectorAll('item'));
+    return items.slice(0,15).map(el=>{
+      const get=tag=>el.querySelector(tag)?.textContent?.trim()||'';
+      const rawDesc=(get('description')||get('summary')).replace(/<[^>]*>/g,'').slice(0,150);
+      return{
+        title:      get('title'),
+        url:        get('link')||get('guid'),
+        source:     srcLabel,
+        srcKey:     srcKey,
+        published:  get('pubDate')||get('dc\\:date')||get('date')||'',
+        description:rawDesc,
+      };
+    }).filter(a=>a.title&&a.url);
   }catch{return[];}
 }
 
-async function _fetchCryptoCompare(){
-  // CryptoCompare public news endpoint has CORS headers — direct browser fetch works
+// Fetch one RSS feed via allorigins.win CORS proxy
+async function _fetchFeed(feed){
+  // allorigins.win returns {contents:'...xml...'} with full CORS headers, no key needed
+  const proxyUrl='https://api.allorigins.win/get?url='+encodeURIComponent(feed.rss);
   try{
-    const r=await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest',{
-      signal:AbortSignal.timeout(8000),
-      headers:{'Authorization':''}
+    const r=await fetch(proxyUrl,{signal:AbortSignal.timeout(10000)});
+    if(!r.ok)return[];
+    const d=await r.json();
+    if(!d.contents)return[];
+    return _parseRSS(d.contents, feed.key, feed.label);
+  }catch{return[];}
+}
+
+// CoinGecko /news — genuinely free public API with CORS, no key
+async function _fetchCoinGecko(){
+  try{
+    const r=await fetch('https://api.coingecko.com/api/v3/news?per_page=20',{
+      signal:AbortSignal.timeout(10000),
+      headers:{'Accept':'application/json'}
+    });
+    if(!r.ok)return[];
+    const raw=await r.json();
+    // CoinGecko returns either an array or {data:[...]}
+    const items=Array.isArray(raw)?raw:(raw.data||[]);
+    return items.slice(0,20).map(a=>({
+      title:      (a.title||a.name||'').trim(),
+      url:        a.url||a.link||'',
+      source:     a.author||'CoinGecko',
+      srcKey:     'coingecko',
+      published:  a.updated_at||a.created_at||'',
+      description:(a.description||'').replace(/<[^>]*>/g,'').slice(0,150),
+    })).filter(a=>a.title&&a.url);
+  }catch{return[];}
+}
+
+// CryptoCompare news — free public endpoint, CORS allowed
+async function _fetchCryptoCompare(){
+  try{
+    const r=await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest&extraParams=signalcore',{
+      signal:AbortSignal.timeout(10000),
+      headers:{'Accept':'application/json'}
     });
     if(!r.ok)return[];
     const d=await r.json();
-    return(d.Data||[]).slice(0,20).map(item=>{
-      const ts=item.published_on||0;
-      const pub=ts?new Date(ts*1000).toISOString():'';
+    return(d.Data||[]).slice(0,20).map(a=>{
+      const pub=a.published_on?new Date(a.published_on*1000).toISOString():'';
       return{
-        title:   (item.title||'').trim(),
-        url:     item.url||'',
-        source:  item.source_info?.name||item.source||'CryptoCompare',
-        srcKey:  'cryptocompare',
-        published: pub,
-        description: (item.body||'').slice(0,140),
-        categories: (item.categories||'').split('|').filter(Boolean).slice(0,3).join(' · '),
+        title:      (a.title||'').trim(),
+        url:        a.url||'',
+        source:     a.source_info?.name||a.source||'CryptoCompare',
+        srcKey:     'cryptocompare',
+        published:  pub,
+        description:(a.body||'').slice(0,150),
+        categories: (a.categories||'').split('|').filter(Boolean).slice(0,3).join(' · '),
       };
-    });
+    }).filter(a=>a.title&&a.url);
   }catch{return[];}
 }
 
@@ -5301,35 +5338,47 @@ async function loadNews(force=false){
   const list=$('news-list');const status=$('news-status');
   if(!list)return;
   if(_newsLoaded&&!force){renderNews();return;}
-  list.innerHTML='<div class="empty" style="padding:60px 20px"><div class="empty-ico">📡</div><div class="empty-t">Fetching latest news...</div><div class="empty-s">Loading from CryptoCompare, CoinTelegraph, CoinDesk & more</div></div>';
 
-  // Fire all fetches in parallel
-  const results=await Promise.allSettled([
-    _fetchCryptoCompare(),
-    ...(NEWS_FEEDS.map(f=>_fetchRSS(f)))
-  ]);
+  list.innerHTML='<div class="empty" style="padding:50px 20px"><div class="empty-ico">📡</div><div class="empty-t">Fetching news...</div><div class="empty-s" id="news-prog">Starting…</div></div>';
 
-  const all=[];
-  const seen=new Set();
-  for(const r of results){
-    if(r.status==='fulfilled'){
-      for(const item of r.value){
-        if(item.title&&!seen.has(item.title)){seen.add(item.title);all.push(item);}
-      }
+  const setprog=msg=>{const el=document.getElementById('news-prog');if(el)el.textContent=msg;};
+
+  setprog('Loading CryptoCompare…');
+  const ccItems=await _fetchCryptoCompare();
+  setprog(`Got ${ccItems.length} from CryptoCompare · Loading CoinGecko…`);
+  const cgItems=await _fetchCoinGecko();
+  setprog(`Got ${cgItems.length} from CoinGecko · Loading RSS feeds…`);
+
+  // Fire RSS feeds in parallel
+  const rssResults=await Promise.allSettled(_NEWS_FEEDS.map(f=>_fetchFeed(f)));
+  const rssItems=[];
+  rssResults.forEach((r,i)=>{
+    if(r.status==='fulfilled'&&r.value.length){
+      setprog(`✅ ${_NEWS_FEEDS[i].label}: ${r.value.length} articles`);
+      rssItems.push(...r.value);
     }
-  }
-
-  // Sort newest first
-  all.sort((a,b)=>{
-    try{return new Date(b.published)-new Date(a.published);}catch{return 0;}
   });
 
-  _newsData=all;
+  const all=[...ccItems,...cgItems,...rssItems];
+  const seen=new Set();
+  const deduped=all.filter(a=>{
+    const k=a.title.toLowerCase().slice(0,60);
+    if(seen.has(k))return false;
+    seen.add(k);return true;
+  });
+
+  deduped.sort((a,b)=>{
+    try{const da=new Date(a.published),db=new Date(b.published);
+      if(isNaN(da))return 1;if(isNaN(db))return -1;return db-da;}catch{return 0;}
+  });
+
+  _newsData=deduped;
   _newsLoaded=true;
 
   if(status){
     status.style.display='block';
-    status.textContent=`${all.length} articles · Updated ${new Date().toLocaleTimeString()}`;
+    const srcs=[ccItems.length&&'CryptoCompare',cgItems.length&&'CoinGecko',..._NEWS_FEEDS.map((f,i)=>rssResults[i].status==='fulfilled'&&rssResults[i].value.length&&f.label)].filter(Boolean);
+    status.textContent=`${deduped.length} articles from ${srcs.length} sources · ${new Date().toLocaleTimeString()}`;
   }
   renderNews();
 }
@@ -5340,19 +5389,19 @@ function renderNews(){
   let items=_newsData.slice();
   if(_newsSrc&&_newsSrc!=='all')items=items.filter(n=>n.srcKey===_newsSrc);
   if(!items.length){
-    if(!_newsLoaded)loadNews();
-    else list.innerHTML='<div class="empty" style="padding:60px 20px"><div class="empty-ico">🔍</div><div class="empty-t">No articles found</div><div class="empty-s">Try another source or refresh</div></div>';
+    if(!_newsLoaded){loadNews();return;}
+    list.innerHTML='<div class="empty" style="padding:60px 20px"><div class="empty-ico">🔍</div><div class="empty-t">No articles found</div><div class="empty-s">Try "All" or hit Refresh</div></div>';
     return;
   }
   list.innerHTML=items.map(n=>{
-    const pub=n.published?timeSince(n.published):'';
-    const desc=n.description?`<div style="font-size:.75rem;color:var(--dim);line-height:1.5;margin-top:5px;font-family:'Nunito',sans-serif">${escHtml(n.description.trim())}…</div>`:'';
-    const cats=n.categories?`<span style="color:rgba(124,58,237,.7);font-family:'JetBrains Mono',monospace;font-size:.55rem">${escHtml(n.categories)}</span>`:'';
+    const pub=n.published?_timeSince(n.published):'';
+    const desc=n.description?`<div style="font-size:.74rem;color:var(--dim);line-height:1.5;margin-top:5px;font-family:'Nunito',sans-serif">${_esc(n.description.trim())}…</div>`:'';
+    const cats=n.categories?`<span style="color:rgba(124,58,237,.65);font-family:'JetBrains Mono',monospace;font-size:.55rem">${_esc(n.categories)}</span>`:'';
     return`<a href="${n.url||'#'}" target="_blank" rel="noopener noreferrer" style="display:block;background:var(--s1);border:2px solid var(--border);border-radius:16px;padding:14px 15px;text-decoration:none;transition:border-color .18s,background .18s" onmouseover="this.style.borderColor='rgba(124,58,237,.45)';this.style.background='var(--s2)'" onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--s1)'">
-      <div style="font-family:'Nunito',sans-serif;font-size:.88rem;font-weight:800;color:var(--text);line-height:1.45">${escHtml(n.title)}</div>
+      <div style="font-family:'Nunito',sans-serif;font-size:.88rem;font-weight:800;color:var(--text);line-height:1.45">${_esc(n.title)}</div>
       ${desc}
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
-        <span style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:.58rem;font-family:'JetBrains Mono',monospace;color:var(--dim)">${escHtml(n.source)}</span>
+        <span style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:.58rem;font-family:'JetBrains Mono',monospace;color:var(--dim)">${_esc(n.source)}</span>
         ${cats}
         ${pub?`<span style="font-family:'JetBrains Mono',monospace;font-size:.58rem;color:var(--dim);margin-left:auto">${pub}</span>`:''}
       </div>
@@ -5360,9 +5409,9 @@ function renderNews(){
   }).join('');
 }
 
-function timeSince(dateStr){
+function _timeSince(dateStr){
   try{
-    const d=new Date(dateStr);const now=new Date();const s=Math.floor((now-d)/1000);
+    const d=new Date(dateStr);const s=Math.floor((Date.now()-d)/1000);
     if(isNaN(s)||s<0)return'';
     if(s<60)return`${s}s ago`;
     const m=Math.floor(s/60);if(m<60)return`${m}m ago`;
@@ -5370,7 +5419,7 @@ function timeSince(dateStr){
     return`${Math.floor(h/24)}d ago`;
   }catch{return'';}
 }
-function escHtml(str){
+function _esc(str){
   return(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
