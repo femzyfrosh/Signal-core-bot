@@ -4861,7 +4861,7 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
       <span class="bnav-lbl">Home</span>
     </button>
     <button class="bnav-btn" id="bnav-signals" onclick="swPage('signals',this)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="10" width="4" height="11" rx="1"/><rect x="9" y="4" width="4" height="17" rx="1"/><rect x="16" y="7" width="4" height="14" rx="1"/></svg>
       <span class="bnav-lbl">Signals</span>
     </button>
     <button class="bnav-btn" id="bnav-trade" onclick="swPage('trade',this)">
