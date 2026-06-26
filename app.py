@@ -4827,12 +4827,6 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
         Refresh
       </button>
     </div>
-    <!-- BTC/ETH price ticker -->
-    <div id="news-ticker" style="display:none;background:rgba(13,12,26,.8);border:1px solid rgba(124,58,237,.2);border-radius:10px;padding:7px 12px;margin-bottom:10px;display:flex;gap:20px;align-items:center;font-family:'JetBrains Mono',monospace;font-size:.72rem;overflow-x:auto;scrollbar-width:none">
-      <span id="ticker-btc" style="display:flex;align-items:center;gap:5px;white-space:nowrap">BTC: –</span>
-      <span id="ticker-eth" style="display:flex;align-items:center;gap:5px;white-space:nowrap">ETH: –</span>
-      <span id="ticker-bnb" style="display:flex;align-items:center;gap:5px;white-space:nowrap">BNB: –</span>
-    </div>
     <!-- Source filter pills -->
     <div style="display:flex;gap:7px;margin-bottom:10px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px">
       <button class="news-src-btn active" onclick="setNewsSrc('all',this)">All</button>
@@ -4865,7 +4859,7 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
       <span class="bnav-lbl">Signals</span>
     </button>
     <button class="bnav-btn" id="bnav-trade" onclick="swPage('trade',this)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="18 13 12 19 6 13"/><line x1="12" y1="5" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg>
       <span class="bnav-lbl">Trade</span>
     </button>
     <button class="bnav-btn" id="bnav-market" onclick="swPage('market',this)">
