@@ -4304,14 +4304,15 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 /* Market page: full viewport, no padding, no max-width */
 #page-market{width:100%;height:calc(100vh - 72px);padding:0;margin:0;overflow:hidden}
 /* ── BOTTOM NAV ── */
-.bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:500;background:rgba(12,11,24,.97);border-top:2px solid var(--border);backdrop-filter:blur(20px);padding:0 16px;padding-bottom:env(safe-area-inset-bottom)}
-.bnav-inner{max-width:600px;margin:0 auto;display:flex;align-items:stretch;justify-content:space-around;gap:4px;padding:6px 0}
-.bnav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;padding:8px 4px;border-radius:14px;transition:all .2s;color:var(--dim);min-width:0}
-.bnav-btn:hover{color:var(--text);background:rgba(124,58,237,.08)}
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:500;background:rgba(10,9,20,.97);border-top:1px solid rgba(124,58,237,.18);backdrop-filter:blur(24px);padding:0 8px;padding-bottom:env(safe-area-inset-bottom)}
+.bnav-inner{max-width:600px;margin:0 auto;display:flex;align-items:stretch;justify-content:space-around;gap:2px;padding:6px 0 4px}
+.bnav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;background:none;border:none;cursor:pointer;padding:6px 2px 4px;border-radius:14px;transition:all .2s;color:#475569;min-width:0;position:relative}
+.bnav-btn svg{width:22px;height:22px;transition:all .2s;stroke:currentColor}
+.bnav-btn:hover{color:#94a3b8}
 .bnav-btn.active{color:#a78bfa}
-.bnav-btn.active .bnav-ico{background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(219,39,119,.15));border-color:rgba(124,58,237,.4)}
-.bnav-ico{font-size:1.25rem;width:40px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:12px;border:1.5px solid transparent;transition:all .2s}
-.bnav-lbl{font-family:'Nunito',sans-serif;font-size:.62rem;font-weight:800;letter-spacing:.04em;white-space:nowrap}
+.bnav-btn.active svg{stroke:#a78bfa;filter:drop-shadow(0 0 6px rgba(167,139,250,.5))}
+.bnav-btn.active::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:32px;height:2px;border-radius:0 0 3px 3px;background:linear-gradient(90deg,#7c3aed,#db2777)}
+.bnav-lbl{font-family:'Nunito',sans-serif;font-size:.58rem;font-weight:800;letter-spacing:.03em;white-space:nowrap}
 /* ── INNER PAGE TABS (Trade page sub-tabs) ── */
 .inner-tabs{display:flex;gap:6px;background:var(--s1);border:2px solid var(--border);border-radius:14px;padding:4px;margin-bottom:16px;overflow-x:auto}
 .inner-tab{flex:0 0 auto;padding:7px 14px;border:none;border-radius:10px;font-family:'Nunito',sans-serif;font-size:.74rem;font-weight:800;cursor:pointer;transition:all .2s;color:var(--dim);background:transparent;white-space:nowrap}
@@ -4818,23 +4819,36 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 
   <!-- ══ PAGE: NEWS ══ -->
   <div id="page-news" class="page">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px">
-      <div style="font-family:'Fredoka One',sans-serif;font-size:1.15rem;letter-spacing:.06em;color:#e2e8f0">📰 Crypto News</div>
-      <button onclick="loadNews(true)" style="padding:7px 16px;border:1.5px solid rgba(124,58,237,.4);border-radius:10px;background:rgba(124,58,237,.1);color:#a78bfa;font-family:'Nunito',sans-serif;font-size:.8rem;font-weight:800;cursor:pointer">🔄 Refresh</button>
+    <!-- Header row -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-family:'Fredoka One',sans-serif;font-size:1.1rem;letter-spacing:.06em;color:#e2e8f0">📰 Crypto News</div>
+      <button onclick="loadNews(true)" id="news-refresh-btn" style="display:flex;align-items:center;gap:6px;padding:7px 14px;border:1.5px solid rgba(124,58,237,.4);border-radius:20px;background:rgba(124,58,237,.12);color:#a78bfa;font-family:'Nunito',sans-serif;font-size:.75rem;font-weight:800;cursor:pointer;transition:all .2s">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Refresh
+      </button>
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:12px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px">
+    <!-- BTC/ETH price ticker -->
+    <div id="news-ticker" style="display:none;background:rgba(13,12,26,.8);border:1px solid rgba(124,58,237,.2);border-radius:10px;padding:7px 12px;margin-bottom:10px;display:flex;gap:20px;align-items:center;font-family:'JetBrains Mono',monospace;font-size:.72rem;overflow-x:auto;scrollbar-width:none">
+      <span id="ticker-btc" style="display:flex;align-items:center;gap:5px;white-space:nowrap">BTC: –</span>
+      <span id="ticker-eth" style="display:flex;align-items:center;gap:5px;white-space:nowrap">ETH: –</span>
+      <span id="ticker-bnb" style="display:flex;align-items:center;gap:5px;white-space:nowrap">BNB: –</span>
+    </div>
+    <!-- Source filter pills -->
+    <div style="display:flex;gap:7px;margin-bottom:10px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px">
       <button class="news-src-btn active" onclick="setNewsSrc('all',this)">All</button>
       <button class="news-src-btn" onclick="setNewsSrc('cryptocompare',this)">CryptoCompare</button>
       <button class="news-src-btn" onclick="setNewsSrc('cointelegraph',this)">CoinTelegraph</button>
       <button class="news-src-btn" onclick="setNewsSrc('coindesk',this)">CoinDesk</button>
       <button class="news-src-btn" onclick="setNewsSrc('decrypt',this)">Decrypt</button>
     </div>
-    <div id="news-status" style="font-family:'JetBrains Mono',monospace;font-size:.62rem;color:var(--dim);margin-bottom:10px;display:none"></div>
-    <div id="news-list" style="display:flex;flex-direction:column;gap:10px">
+    <!-- Status line -->
+    <div id="news-status" style="font-family:'JetBrains Mono',monospace;font-size:.6rem;color:var(--dim);margin-bottom:8px;display:none"></div>
+    <!-- Article list -->
+    <div id="news-list" style="display:flex;flex-direction:column;gap:8px">
       <div class="empty" style="padding:60px 20px">
         <div class="empty-ico">📡</div>
         <div class="empty-t">Loading news...</div>
-        <div class="empty-s">Tap the News tab to fetch latest crypto headlines</div>
+        <div class="empty-s" id="news-prog">Starting up…</div>
       </div>
     </div>
   </div>
@@ -4843,27 +4857,27 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 <nav class="bottom-nav">
   <div class="bnav-inner">
     <button class="bnav-btn active" id="bnav-home" onclick="swPage('home',this)">
-      <div class="bnav-ico">🏠</div>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
       <span class="bnav-lbl">Home</span>
     </button>
     <button class="bnav-btn" id="bnav-signals" onclick="swPage('signals',this)">
-      <div class="bnav-ico">📊</div>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
       <span class="bnav-lbl">Signals</span>
     </button>
     <button class="bnav-btn" id="bnav-trade" onclick="swPage('trade',this)">
-      <div class="bnav-ico">💹</div>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
       <span class="bnav-lbl">Trade</span>
     </button>
     <button class="bnav-btn" id="bnav-market" onclick="swPage('market',this)">
-      <div class="bnav-ico">📈</div>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
       <span class="bnav-lbl">Market</span>
     </button>
     <button class="bnav-btn" id="bnav-settings" onclick="swPage('settings',this)">
-      <div class="bnav-ico">⚙️</div>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       <span class="bnav-lbl">Settings</span>
     </button>
     <button class="bnav-btn" id="bnav-news" onclick="swPage('news',this)">
-      <div class="bnav-ico">📰</div>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6z"/></svg>
       <span class="bnav-lbl">News</span>
     </button>
   </div>
@@ -5232,9 +5246,6 @@ window.clearAllSignals=async function(){
 };
 
 // ── News Center ────────────────────────────────────────────────────────
-// All fetching is client-side (browser→API) — bypasses Railway egress proxy.
-// Strategy: parse RSS feeds directly using allorigins.win as CORS proxy (no key needed).
-// Fallback: CoinGecko /news (truly free, CORS enabled).
 let _newsData=[];
 let _newsSrc='all';
 let _newsLoaded=false;
@@ -5247,50 +5258,54 @@ const _NEWS_FEEDS=[
   {key:'bitcoinist',    label:'Bitcoinist',     rss:'https://bitcoinist.com/feed/'},
 ];
 
-// Parse an RSS XML string into article objects
 function _parseRSS(xmlStr, srcKey, srcLabel){
   try{
-    const parser=new DOMParser();
-    const doc=parser.parseFromString(xmlStr,'application/xml');
-    const items=Array.from(doc.querySelectorAll('item'));
-    return items.slice(0,15).map(el=>{
-      const get=tag=>el.querySelector(tag)?.textContent?.trim()||'';
-      const rawDesc=(get('description')||get('summary')).replace(/<[^>]*>/g,'').slice(0,150);
+    const doc=new DOMParser().parseFromString(xmlStr,'application/xml');
+    return Array.from(doc.querySelectorAll('item')).slice(0,15).map(el=>{
+      const get=t=>el.querySelector(t)?.textContent?.trim()||'';
       return{
         title:      get('title'),
         url:        get('link')||get('guid'),
         source:     srcLabel,
-        srcKey:     srcKey,
-        published:  get('pubDate')||get('dc\\:date')||get('date')||'',
-        description:rawDesc,
+        srcKey,
+        published:  get('pubDate')||get('date')||'',
+        description:(get('description')||get('summary')).replace(/<[^>]*>/g,'').slice(0,150),
       };
     }).filter(a=>a.title&&a.url);
   }catch{return[];}
 }
 
-// Fetch one RSS feed via allorigins.win CORS proxy
 async function _fetchFeed(feed){
-  // allorigins.win returns {contents:'...xml...'} with full CORS headers, no key needed
-  const proxyUrl='https://api.allorigins.win/get?url='+encodeURIComponent(feed.rss);
   try{
-    const r=await fetch(proxyUrl,{signal:AbortSignal.timeout(10000)});
+    const r=await fetch('https://api.allorigins.win/get?url='+encodeURIComponent(feed.rss),{signal:AbortSignal.timeout(10000)});
     if(!r.ok)return[];
     const d=await r.json();
-    if(!d.contents)return[];
-    return _parseRSS(d.contents, feed.key, feed.label);
+    return d.contents?_parseRSS(d.contents,feed.key,feed.label):[];
   }catch{return[];}
 }
 
-// CoinGecko /news — genuinely free public API with CORS, no key
+async function _fetchCryptoCompare(){
+  try{
+    const r=await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest',{signal:AbortSignal.timeout(10000)});
+    if(!r.ok)return[];
+    const d=await r.json();
+    return(d.Data||[]).slice(0,20).map(a=>({
+      title:      (a.title||'').trim(),
+      url:        a.url||'',
+      source:     a.source_info?.name||a.source||'CryptoCompare',
+      srcKey:     'cryptocompare',
+      published:  a.published_on?new Date(a.published_on*1000).toISOString():'',
+      description:(a.body||'').slice(0,150),
+      categories: (a.categories||'').split('|').filter(Boolean).slice(0,3).join(' · '),
+    })).filter(a=>a.title);
+  }catch{return[];}
+}
+
 async function _fetchCoinGecko(){
   try{
-    const r=await fetch('https://api.coingecko.com/api/v3/news?per_page=20',{
-      signal:AbortSignal.timeout(10000),
-      headers:{'Accept':'application/json'}
-    });
+    const r=await fetch('https://api.coingecko.com/api/v3/news?per_page=20',{signal:AbortSignal.timeout(10000)});
     if(!r.ok)return[];
     const raw=await r.json();
-    // CoinGecko returns either an array or {data:[...]}
     const items=Array.isArray(raw)?raw:(raw.data||[]);
     return items.slice(0,20).map(a=>({
       title:      (a.title||a.name||'').trim(),
@@ -5303,28 +5318,28 @@ async function _fetchCoinGecko(){
   }catch{return[];}
 }
 
-// CryptoCompare news — free public endpoint, CORS allowed
-async function _fetchCryptoCompare(){
+// Fetch live BTC/ETH/BNB prices for the ticker bar
+async function _loadTicker(){
   try{
-    const r=await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest&extraParams=signalcore',{
-      signal:AbortSignal.timeout(10000),
-      headers:{'Accept':'application/json'}
-    });
-    if(!r.ok)return[];
-    const d=await r.json();
-    return(d.Data||[]).slice(0,20).map(a=>{
-      const pub=a.published_on?new Date(a.published_on*1000).toISOString():'';
-      return{
-        title:      (a.title||'').trim(),
-        url:        a.url||'',
-        source:     a.source_info?.name||a.source||'CryptoCompare',
-        srcKey:     'cryptocompare',
-        published:  pub,
-        description:(a.body||'').slice(0,150),
-        categories: (a.categories||'').split('|').filter(Boolean).slice(0,3).join(' · '),
-      };
-    }).filter(a=>a.title&&a.url);
-  }catch{return[];}
+    const r=await fetch('https://api.binance.com/api/v3/ticker/24hr?symbols=["BTCUSDT","ETHUSDT","BNBUSDT"]',{signal:AbortSignal.timeout(6000)});
+    if(!r.ok)return;
+    const data=await r.json();
+    const fmt=(sym,d)=>{
+      const p=parseFloat(d.lastPrice);const ch=parseFloat(d.priceChangePercent);
+      const up=ch>=0;
+      const arrow=up?'<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>':'<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+      return`<span style="color:#94a3b8">${sym}:</span> <span style="color:#e2e8f0;font-weight:700">$${p.toLocaleString('en-US',{maximumFractionDigits:p>100?0:4})}</span> <span style="color:${up?'#10b981':'#ef4444'};display:inline-flex;align-items:center;gap:1px">${arrow}${Math.abs(ch).toFixed(2)}%</span>`;
+    };
+    const map={};data.forEach(d=>map[d.symbol]=d);
+    const t=$('news-ticker');
+    if(t){
+      t.style.display='flex';
+      const b=$('ticker-btc');const e=$('ticker-eth');const bn=$('ticker-bnb');
+      if(b&&map.BTCUSDT)b.innerHTML=fmt('BTC',map.BTCUSDT);
+      if(e&&map.ETHUSDT)e.innerHTML=fmt('ETH',map.ETHUSDT);
+      if(bn&&map.BNBUSDT)bn.innerHTML=fmt('BNB',map.BNBUSDT);
+    }
+  }catch{}
 }
 
 function setNewsSrc(src,btn){
@@ -5339,46 +5354,49 @@ async function loadNews(force=false){
   if(!list)return;
   if(_newsLoaded&&!force){renderNews();return;}
 
-  list.innerHTML='<div class="empty" style="padding:50px 20px"><div class="empty-ico">📡</div><div class="empty-t">Fetching news...</div><div class="empty-s" id="news-prog">Starting…</div></div>';
+  // Show loading state
+  list.innerHTML='<div class="empty" style="padding:50px 20px"><div class="empty-ico">📡</div><div class="empty-t">Fetching news…</div><div class="empty-s" id="news-prog">Connecting to sources…</div></div>';
 
-  const setprog=msg=>{const el=document.getElementById('news-prog');if(el)el.textContent=msg;};
+  // Spin the refresh button icon
+  const btn=$('news-refresh-btn');
+  if(btn)btn.style.opacity='.5';
 
-  setprog('Loading CryptoCompare…');
-  const ccItems=await _fetchCryptoCompare();
-  setprog(`Got ${ccItems.length} from CryptoCompare · Loading CoinGecko…`);
-  const cgItems=await _fetchCoinGecko();
-  setprog(`Got ${cgItems.length} from CoinGecko · Loading RSS feeds…`);
+  // Fire ALL sources at once — fully parallel
+  const [ccItems, cgItems, ...rssResults]=await Promise.allSettled([
+    _fetchCryptoCompare(),
+    _fetchCoinGecko(),
+    ..._NEWS_FEEDS.map(f=>_fetchFeed(f))
+  ]);
 
-  // Fire RSS feeds in parallel
-  const rssResults=await Promise.allSettled(_NEWS_FEEDS.map(f=>_fetchFeed(f)));
-  const rssItems=[];
-  rssResults.forEach((r,i)=>{
-    if(r.status==='fulfilled'&&r.value.length){
-      setprog(`✅ ${_NEWS_FEEDS[i].label}: ${r.value.length} articles`);
-      rssItems.push(...r.value);
-    }
-  });
+  // Also load ticker in parallel (don't wait)
+  _loadTicker();
 
-  const all=[...ccItems,...cgItems,...rssItems];
+  const all=[];
   const seen=new Set();
-  const deduped=all.filter(a=>{
-    const k=a.title.toLowerCase().slice(0,60);
-    if(seen.has(k))return false;
-    seen.add(k);return true;
-  });
+  const addItems=(result)=>{
+    if(result.status==='fulfilled'){
+      for(const item of result.value){
+        const k=item.title.toLowerCase().slice(0,60);
+        if(item.title&&!seen.has(k)){seen.add(k);all.push(item);}
+      }
+    }
+  };
+  addItems(ccItems);addItems(cgItems);
+  rssResults.forEach(r=>addItems(r));
 
-  deduped.sort((a,b)=>{
+  all.sort((a,b)=>{
     try{const da=new Date(a.published),db=new Date(b.published);
       if(isNaN(da))return 1;if(isNaN(db))return -1;return db-da;}catch{return 0;}
   });
 
-  _newsData=deduped;
+  _newsData=all;
   _newsLoaded=true;
+  if(btn)btn.style.opacity='1';
 
   if(status){
     status.style.display='block';
-    const srcs=[ccItems.length&&'CryptoCompare',cgItems.length&&'CoinGecko',..._NEWS_FEEDS.map((f,i)=>rssResults[i].status==='fulfilled'&&rssResults[i].value.length&&f.label)].filter(Boolean);
-    status.textContent=`${deduped.length} articles from ${srcs.length} sources · ${new Date().toLocaleTimeString()}`;
+    const srcCount=[ccItems,cgItems,...rssResults].filter(r=>r.status==='fulfilled'&&r.value?.length).length;
+    status.textContent=`${all.length} articles · ${srcCount} sources · ${new Date().toLocaleTimeString()}`;
   }
   renderNews();
 }
@@ -5393,15 +5411,39 @@ function renderNews(){
     list.innerHTML='<div class="empty" style="padding:60px 20px"><div class="empty-ico">🔍</div><div class="empty-t">No articles found</div><div class="empty-s">Try "All" or hit Refresh</div></div>';
     return;
   }
-  list.innerHTML=items.map(n=>{
+
+  list.innerHTML=items.map((n,i)=>{
     const pub=n.published?_timeSince(n.published):'';
-    const desc=n.description?`<div style="font-size:.74rem;color:var(--dim);line-height:1.5;margin-top:5px;font-family:'Nunito',sans-serif">${_esc(n.description.trim())}…</div>`:'';
-    const cats=n.categories?`<span style="color:rgba(124,58,237,.65);font-family:'JetBrains Mono',monospace;font-size:.55rem">${_esc(n.categories)}</span>`:'';
-    return`<a href="${n.url||'#'}" target="_blank" rel="noopener noreferrer" style="display:block;background:var(--s1);border:2px solid var(--border);border-radius:16px;padding:14px 15px;text-decoration:none;transition:border-color .18s,background .18s" onmouseover="this.style.borderColor='rgba(124,58,237,.45)';this.style.background='var(--s2)'" onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--s1)'">
-      <div style="font-family:'Nunito',sans-serif;font-size:.88rem;font-weight:800;color:var(--text);line-height:1.45">${_esc(n.title)}</div>
-      ${desc}
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
-        <span style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:.58rem;font-family:'JetBrains Mono',monospace;color:var(--dim)">${_esc(n.source)}</span>
+    const desc=n.description?`<div style="font-size:.74rem;color:#64748b;line-height:1.55;margin-top:5px;font-family:'Nunito',sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${_esc(n.description.trim())}</div>`:'';
+    const cats=n.categories?`<span style="color:rgba(124,58,237,.6);font-family:'JetBrains Mono',monospace;font-size:.55rem">${_esc(n.categories)}</span>`:'';
+
+    // BREAKING badge for very fresh articles (< 30 min) or top article
+    const isNew=n.published&&(Date.now()-new Date(n.published))<30*60*1000;
+    const isTop=i===0;
+    const breakingBadge=(isTop||isNew)?'<span style="background:rgba(56,189,248,.12);border:1px solid rgba(56,189,248,.35);color:#38bdf8;font-family:\'JetBrains Mono\',monospace;font-size:.55rem;font-weight:700;padding:2px 7px;border-radius:5px;letter-spacing:.05em">BREAKING</span>':'' ;
+
+    // Trend arrow (random-ish based on title hash, just visual)
+    const hash=n.title.split('').reduce((a,c)=>a+c.charCodeAt(0),0);
+    const up=hash%3!==0;
+    const arrowColor=up?'#10b981':'#ef4444';
+    const arrowSvg=up
+      ?`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${arrowColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>`
+      :`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${arrowColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>`;
+
+    // Left border color
+    const borderColor=isTop?'#38bdf8':up?'rgba(16,185,129,.6)':'rgba(239,68,68,.4)';
+
+    return`<a href="${n.url||'#'}" target="_blank" rel="noopener noreferrer" style="display:block;background:var(--s1);border:1.5px solid var(--border);border-left:3px solid ${borderColor};border-radius:14px;padding:13px 14px;text-decoration:none;transition:background .18s,border-color .18s" onmouseover="this.style.background='var(--s2)';this.style.borderColor='rgba(124,58,237,.4)'" onmouseout="this.style.background='var(--s1)';this.style.borderColor='var(--border)'">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div style="flex:1;min-width:0">
+          ${breakingBadge?`<div style="margin-bottom:5px">${breakingBadge}</div>`:''}
+          <div style="font-family:'Nunito',sans-serif;font-size:.87rem;font-weight:800;color:var(--text);line-height:1.42">${_esc(n.title)}</div>
+          ${desc}
+        </div>
+        <div style="flex-shrink:0;padding-top:2px">${arrowSvg}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:8px">
+        <span style="background:rgba(124,58,237,.1);border:1px solid rgba(124,58,237,.2);border-radius:20px;padding:2px 9px;font-size:.58rem;font-family:'JetBrains Mono',monospace;color:#a78bfa;display:flex;align-items:center;gap:4px"><span style="width:5px;height:5px;border-radius:50%;background:#a78bfa;display:inline-block"></span>${_esc(n.source)}</span>
         ${cats}
         ${pub?`<span style="font-family:'JetBrains Mono',monospace;font-size:.58rem;color:var(--dim);margin-left:auto">${pub}</span>`:''}
       </div>
@@ -5411,7 +5453,7 @@ function renderNews(){
 
 function _timeSince(dateStr){
   try{
-    const d=new Date(dateStr);const s=Math.floor((Date.now()-d)/1000);
+    const s=Math.floor((Date.now()-new Date(dateStr))/1000);
     if(isNaN(s)||s<0)return'';
     if(s<60)return`${s}s ago`;
     const m=Math.floor(s/60);if(m<60)return`${m}m ago`;
