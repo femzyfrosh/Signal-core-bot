@@ -5051,77 +5051,106 @@ async function fetchMonitor(){if(activePage!=="signals")return;try{
     }
   }
 }catch(e){console.error("fetchMonitor",e);}}
-window.fetchPnl=async function(){const onTrades=activeTab==="trades",onCfg=activeTab==="trade-cfg";if(!onTrades&&!onCfg)return;try{const[tr,pnl,hist]=await Promise.all([fetch("/api/trades").then(r=>r.json()),fetch("/api/pnl").then(r=>r.json()),fetch("/api/recent-trades").then(r=>r.json())]);const pnlMap={};(pnl.positions||[]).forEach(p=>pnlMap[p.symbol]=p);const buildOpenTable=function(trades,wrapId,countId){const wrap=$(wrapId);if(!wrap)return;if(countId&&$(countId))$(countId).textContent=`(${trades.length})`;if(!trades.length){wrap.innerHTML='<div class="empty" style="padding:40px"><div class="empty-ico">😴</div><div class="empty-t">No open trades</div></div>';return;}window._liveTradesData=trades;wrap.innerHTML=`<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Pair</th><th>Dir</th><th>Entry Price</th><th>Current Price</th><th>SL</th><th>TP</th><th>RR</th><th>Lev</th><th>Margin</th><th>Live PnL</th><th>ROI%</th><th>Grade</th><th>Card</th><th>Action</th></tr></thead><tbody>${trades.map((t,i)=>{const live=pnlMap[t.symbol]||{};const pv=live.pnl||0;const roi=live.roi_pct||0;const cur=live.current||0;const lev=live.leverage||t.leverage||"–";const margin=(live.margin||0).toFixed(2);return`<tr><td style="font-weight:800;color:var(--text)">${t.symbol}</td><td class="${t.direction==="BUY"?"buy":"sell"}">${t.direction}</td><td>${fmt(t.entry)}</td><td style="color:var(--yellow)">${cur?fmt(cur):"–"}</td><td style="color:var(--red)">${fmt(t.sl)}</td><td style="color:var(--green)">${fmt(t.tp)}</td><td style="color:var(--yellow)">${t.rr}R</td><td style="color:#a78bfa">${lev}x</td><td>$${margin}</td><td class="pos-pnl ${pv>=0?"pos":"neg"}">${pv>=0?"+":""}${pv.toFixed(2)}</td><td class="pos-pnl ${roi>=0?"pos":"neg"}">${roi>=0?"+":""}${roi.toFixed(2)}%</td><td style="color:${scoreColor(t.score||0)};font-family:'Fredoka One',sans-serif">${t.grade||"–"}</td><td><button class="action-btn share-btn" onclick="showTradeCard({symbol:'${t.symbol}',direction:'${t.direction}',entry:${t.entry},sl:${t.sl},tp:${t.tp},rr:'${t.rr}',grade:'${t.grade||'–'}',score:${t.score||0},pnl:${pv.toFixed(2)},pnl_pct:${roi.toFixed(2)},market_price:${cur},status:'RUNNING'},true,'LIVE')">📸</button></td><td><button class="action-btn close-btn" onclick="closeTrade('${t.symbol}')">✕</button></td></tr>`;}).join("")}</tbody></table></div>`;};window._histData=hist;_buildMexcCards(hist,"history-wrap2");buildOpenTable(tr,"live-trades-wrap","trades-count");buildOpenTable(tr,"live-trades-wrap2","live-pos-count");}catch{}};
 
-function _buildMexcCards(data, wrapId) {
+function _oCol(label, value, color) {
+  return "<div style=\"background:rgba(0,0,0,.2);border-radius:8px;padding:7px 8px\">"
+    + "<div style=\"font-size:.55rem;color:var(--dim);font-family:'JetBrains Mono',monospace;margin-bottom:3px\">" + label + "</div>"
+    + "<div style=\"font-size:.72rem;font-weight:700;color:" + color + ";font-family:'JetBrains Mono',monospace\">" + value + "</div>"
+  + "</div>";
+}
+
+function _buildOpenCards(trades, wrapId, countId, pnlMap, isLive) {
   var wrap = $(wrapId);
   if (!wrap) return;
-  if (!data.length) {
-    wrap.innerHTML = "<div class=\"empty\" style=\"padding:40px\"><div class=\"empty-ico\">📭</div><div class=\"empty-t\">No completed trades yet</div></div>";
+  if (countId && $(countId)) $(countId).textContent = "(" + trades.length + ")";
+  if (!trades.length) {
+    wrap.innerHTML = "<div class=\"empty\" style=\"padding:40px\"><div class=\"empty-ico\">😴</div><div class=\"empty-t\">No open trades</div></div>";
     return;
   }
+  if (isLive) window._liveTradesData = trades;
+  else window._paperTradesData = trades;
   var html = "";
-  data.forEach(function(t, i) {
-    var pv = t.pnl || 0;
-    var pp = t.pnl_pct || 0;
-    var isLong = t.direction === "BUY";
-    var isWin = (t.status || "").toLowerCase().indexOf("tp") >= 0;
+  trades.forEach(function(t, i) {
+    var live = (pnlMap && pnlMap[t.symbol]) || {};
+    var pv   = isLive ? (live.pnl || 0)      : (t.pnl || 0);
+    var roi  = isLive ? (live.roi_pct || 0)  : (t.pnl_pct || 0);
+    var cur  = isLive ? (live.current || 0)  : (t.current_price || 0);
+    var lev  = live.leverage || t.leverage || "";
+    var margin     = isLive ? ((live.margin || 0).toFixed(2)) : (t.risk_amount || "–");
+    var marginRatio= live.margin_ratio ? live.margin_ratio.toFixed(2) + "%" : "–";
+    var liqPrice   = live.liq_price ? fmt(live.liq_price) : "–";
+    var fairPrice  = cur ? fmt(cur) : "–";
+    var isLong   = t.direction === "BUY";
     var pnlColor = pv >= 0 ? "#10b981" : "#ef4444";
     var dirColor = isLong ? "#10b981" : "#ef4444";
     var dirLabel = isLong ? "Long" : "Short";
-    var lev = t.leverage || "–";
-    var entry = fmt(t.entry);
-    var closeP = fmt(t.close_price || t.exit_price || 0);
-    var sl = fmt(t.sl);
-    var tp = fmt(t.tp);
+    var pvSign   = pv >= 0 ? "+" : "";
+    var roiSign  = roi >= 0 ? "+" : "";
     var openedAt = (t.opened_at || "").replace(" UTC+1","").replace(" UTC","");
-    var closedAt = (t.closed_at || "").replace(" UTC+1","").replace(" UTC","");
-    var statusColor = isWin ? "#10b981" : "#ef4444";
-    var statusLabel = t.status || "CLOSED";
-    var pnlSign = pv >= 0 ? "+" : "";
-    var ppSign = pp >= 0 ? "+" : "";
+    var closeClick = isLive ? "closeTrade('" + t.symbol + "')" : "closePaperTrade('" + t.symbol + "')";
+    var cardClick  = isLive
+      ? "showTradeCard({symbol:'" + t.symbol + "',direction:'" + t.direction + "',entry:" + t.entry + ",sl:" + t.sl + ",tp:" + t.tp + ",rr:'" + t.rr + "',grade:'" + (t.grade||"–") + "',score:" + (t.score||0) + ",pnl:" + pv.toFixed(2) + ",pnl_pct:" + roi.toFixed(2) + ",market_price:" + cur + ",status:'RUNNING'},true,'LIVE')"
+      : "showTradeCard(window._paperTradesData[" + i + "],true,'PAPER')";
+
     html += "<div style=\"background:var(--s1);border:1.5px solid var(--border);border-radius:14px;padding:14px 15px;margin-bottom:10px\">"
-      // Header: pair + direction badge + leverage + status
-      + "<div style=\"display:flex;align-items:center;justify-content:space-between;margin-bottom:10px\">"
+      // Header: pair name + refresh/card buttons
+      + "<div style=\"display:flex;align-items:center;justify-content:space-between;margin-bottom:6px\">"
         + "<div style=\"display:flex;align-items:center;gap:8px\">"
-          + "<span style=\"font-family:'Fredoka One',sans-serif;font-size:.95rem;color:var(--text)\">" + t.symbol.replace("_USDT","") + " <span style=\"font-size:.7rem;color:var(--dim)\">Perpetual</span></span>"
+          + "<span style=\"font-family:'Fredoka One',sans-serif;font-size:1rem;color:var(--text)\">" + t.symbol.replace("_USDT","") + "USDT</span>"
+          + "<span style=\"font-size:.68rem;color:var(--dim);font-family:'Nunito',sans-serif\">Perpetual</span>"
         + "</div>"
-        + "<div style=\"display:flex;align-items:center;gap:6px\">"
-          + "<button class=\"action-btn share-btn\" style=\"padding:3px 8px;font-size:.6rem\" onclick=\"showTradeCard(window._histData[" + i + "],false,'LIVE')\">📸</button>"
+        + "<div style=\"display:flex;gap:6px;align-items:center\">"
+          + "<button class=\"action-btn share-btn\" style=\"padding:3px 8px;font-size:.6rem;border-radius:6px\" onclick=\"" + cardClick + "\">📸</button>"
         + "</div>"
       + "</div>"
-      // Direction + leverage badges
-      + "<div style=\"display:flex;gap:6px;margin-bottom:12px\">"
-        + "<span style=\"background:" + (isLong?"rgba(16,185,129,.15)":"rgba(239,68,68,.15)") + ";border:1px solid " + (isLong?"rgba(16,185,129,.4)":"rgba(239,68,68,.4)") + ";color:" + dirColor + ";font-size:.65rem;font-weight:800;padding:3px 10px;border-radius:5px;font-family:'JetBrains Mono',monospace\">" + dirLabel + "</span>"
-        + (lev!=="–"?"<span style=\"background:rgba(124,58,237,.12);border:1px solid rgba(124,58,237,.3);color:#a78bfa;font-size:.65rem;font-weight:800;padding:3px 10px;border-radius:5px;font-family:'JetBrains Mono',monospace\">Cross." + lev + "X</span>":"")
-        + "<span style=\"background:" + (isWin?"rgba(16,185,129,.1)":"rgba(239,68,68,.1)") + ";border:1px solid " + (isWin?"rgba(16,185,129,.3)":"rgba(239,68,68,.3)") + ";color:" + statusColor + ";font-size:.6rem;font-weight:700;padding:3px 10px;border-radius:5px;font-family:'JetBrains Mono',monospace;margin-left:auto\">" + statusLabel + "</span>"
+      // Leverage badge row
+      + "<div style=\"margin-bottom:10px\">"
+        + "<span style=\"background:rgba(124,58,237,.12);border:1px solid rgba(124,58,237,.3);color:#a78bfa;font-size:.65rem;font-weight:700;padding:3px 10px;border-radius:5px;font-family:'JetBrains Mono',monospace\">"
+          + (isLong ? "Long" : "Short") + (lev ? " " + lev + "X" : "") + " &rsaquo;"
+        + "</span>"
       + "</div>"
-      // Data rows — MEXC style dashed separator lines
-      + "<div style=\"display:flex;flex-direction:column;gap:0\">"
-        + _mRow("Entry Price", entry, "var(--text)")
-        + _mRow("Close Price", closeP, "var(--yellow)")
-        + _mRow("Realized PnL (USDT)", pnlSign + pv.toFixed(4), pnlColor)
-        + _mRow("PnL Rate", ppSign + pp.toFixed(2) + "%", pnlColor)
-        + _mRow("Stop Loss", sl, "#ef4444")
-        + _mRow("Take Profit", tp, "#10b981")
-        + _mRow("RR", (t.rr || "–") + "R", "var(--yellow)")
-        + _mRow("Grade", t.grade || "–", "#a78bfa")
-        + _mRow("Open Time", openedAt, "var(--dim)")
-        + (closedAt ? _mRow("Close Time", closedAt, "var(--dim)") : "")
+      // Unrealized PnL label + value (right aligned, big)
+      + "<div style=\"display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px\">"
+        + "<span style=\"font-size:.62rem;color:var(--dim);font-family:'JetBrains Mono',monospace\">Unrealized PnL (USDT)</span>"
+        + "<span style=\"font-size:1.05rem;font-weight:900;font-family:'Fredoka One',sans-serif;color:" + pnlColor + "\">"
+          + pvSign + pv.toFixed(3) + " <span style=\"font-size:.78rem\">[" + roiSign + roi.toFixed(2) + "%]</span>"
+        + "</span>"
       + "</div>"
+      // Row 1: Size | Margin | Margin Ratio
+      + "<div style=\"display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px\">"
+        + _oCol("Size (USDT)", t.size ? fmt(t.size) : "$" + margin, "var(--text)")
+        + _oCol("Margin (USDT)", "$" + margin, "var(--text)")
+        + _oCol("Margin Ratio", marginRatio, "#f59e0b")
+      + "</div>"
+      // Row 2: Avg Price | Fair Price | Liq Price
+      + "<div style=\"display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px\">"
+        + _oCol("Avg. Price", fmt(t.entry), "var(--text)")
+        + _oCol("Fair Price", fairPrice, "var(--text)")
+        + _oCol("Liq. Price", liqPrice, "#ef4444")
+      + "</div>"
+      // TP/SL line
+      + "<div style=\"display:flex;align-items:center;gap:6px;padding:6px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:10px\">"
+        + "<span style=\"font-size:.6rem;color:var(--dim);font-family:'JetBrains Mono',monospace\">TP/SL</span>"
+        + "<span style=\"font-size:.72rem;font-weight:700;color:#10b981;font-family:'JetBrains Mono',monospace\">" + fmt(t.tp) + "</span>"
+        + "<span style=\"font-size:.65rem;color:var(--dim)\">/</span>"
+        + "<span style=\"font-size:.72rem;font-weight:700;color:#ef4444;font-family:'JetBrains Mono',monospace\">" + fmt(t.sl) + "</span>"
+        + "<span style=\"margin-left:auto;font-size:.6rem;color:var(--yellow);font-family:'JetBrains Mono',monospace\">" + (t.rr||"–") + "R</span>"
+        + (t.grade ? "<span style=\"font-size:.6rem;font-weight:700;color:#a78bfa;font-family:'Fredoka One',sans-serif\">" + t.grade + "</span>" : "")
+      + "</div>"
+      // Action buttons row — MEXC style
+      + "<div style=\"display:grid;grid-template-columns:1fr 1fr;gap:8px\">"
+        + "<button onclick=\"" + closeClick + "\" style=\"padding:10px;border-radius:22px;border:1.5px solid rgba(239,68,68,.35);background:rgba(239,68,68,.08);color:#ef4444;font-family:'Nunito',sans-serif;font-size:.78rem;font-weight:800;cursor:pointer\">Close</button>"
+        + "<button onclick=\"" + cardClick + "\" style=\"padding:10px;border-radius:22px;border:1.5px solid rgba(124,58,237,.35);background:rgba(124,58,237,.12);color:#a78bfa;font-family:'Nunito',sans-serif;font-size:.78rem;font-weight:800;cursor:pointer\">Share Card</button>"
+      + "</div>"
+      // Opened at timestamp
+      + "<div style=\"font-size:.55rem;color:var(--dim);font-family:'JetBrains Mono',monospace;text-align:right;margin-top:8px\">" + openedAt + "</div>"
     + "</div>";
   });
   wrap.innerHTML = html;
 }
 
-function _mRow(label, value, color) {
-  return "<div style=\"display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px dashed rgba(255,255,255,.06)\">"
-    + "<span style=\"font-family:'JetBrains Mono',monospace;font-size:.62rem;color:var(--dim)\">" + label + "</span>"
-    + "<span style=\"font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:700;color:" + color + "\">" + value + "</span>"
-  + "</div>";
-}
-
-async function fetchHistory(){if(activeTab!=="history")return;try{const r=await fetch("/api/recent-trades");const data=await r.json();window._histData=data;_buildMexcCards(data,"history-wrap");}catch{}}
+window.fetchPnl=async function(){const onTrades=activeTab==="trades",onCfg=activeTab==="trade-cfg";if(!onTrades&&!onCfg)return;try{const[tr,pnl,hist]=await Promise.all([fetch("/api/trades").then(r=>r.json()),fetch("/api/pnl").then(r=>r.json()),fetch("/api/recent-trades").then(r=>r.json())]);const pnlMap={};(pnl.positions||[]).forEach(p=>pnlMap[p.symbol]=p);const buildOpenTable=function(trades,wrapId,countId){_buildOpenCards(trades,wrapId,countId,pnlMap,true);};const buildHistTable=function(data,wrapId){const wrap=$(wrapId);if(!wrap)return;if(!data.length){wrap.innerHTML='<div class="empty" style="padding:40px"><div class="empty-ico">📭</div><div class="empty-t">No completed trades yet</div></div>';return;}window._histData=data;wrap.innerHTML=`<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Pair</th><th>Dir</th><th>Entry Price</th><th>Exit Price</th><th>SL</th><th>TP</th><th>RR</th><th>PnL $</th><th>PnL %</th><th>Grade</th><th>Status</th><th>Opened</th><th>Card</th></tr></thead><tbody>${data.map((t,i)=>{const pv=t.pnl||0;const pp=t.pnl_pct||0;const isW=(t.status||"").toLowerCase().includes("tp");return`<tr><td style="font-weight:800;color:var(--text)">${t.symbol}</td><td class="${t.direction==="BUY"?"buy":"sell"}">${t.direction}</td><td>${fmt(t.entry)}</td><td style="color:var(--yellow)">${fmt(t.close_price||t.exit_price||"–")}</td><td style="color:var(--red)">${fmt(t.sl)}</td><td style="color:var(--green)">${fmt(t.tp)}</td><td style="color:var(--yellow)">${t.rr}R</td><td class="pos-pnl ${pv>=0?"pos":"neg"}">${pv>=0?"+":""}${pv.toFixed(2)}</td><td class="pos-pnl ${pp>=0?"pos":"neg"}">${pp>=0?"+":""}${pp.toFixed(2)}%</td><td style="color:${scoreColor(t.score||0)};font-family:'Fredoka One',sans-serif">${t.grade||"–"}</td><td style="color:${isW?"var(--green)":"var(--red)"};font-size:.62rem">${t.status||"–"}</td><td style="color:var(--dim)">${(t.opened_at||"").replace(" UTC","")}</td><td><button class="action-btn share-btn" onclick="showTradeCard(window._histData[${i}],false,'LIVE')">📸</button></td></tr>`;}).join("")}</tbody></table></div>`;};buildOpenTable(tr,"live-trades-wrap","trades-count");buildOpenTable(tr,"live-trades-wrap2","live-pos-count");buildHistTable(hist,"history-wrap2");}catch{}};
+async function fetchHistory(){if(activeTab!=="history")return;try{const r=await fetch("/api/recent-trades");const data=await r.json();const wrap=$("history-wrap");if(!wrap)return;if(!data.length){wrap.innerHTML='<div class="empty" style="padding:40px"><div class="empty-ico">📭</div><div class="empty-t">No completed trades yet</div></div>';return;}window._histData=data;wrap.innerHTML=`<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Pair</th><th>Dir</th><th>Entry Price</th><th>Exit Price</th><th>SL</th><th>TP</th><th>RR</th><th>PnL $</th><th>PnL %</th><th>Grade</th><th>Status</th><th>Opened</th><th>Card</th></tr></thead><tbody>${data.map((t,i)=>{const pv=t.pnl||0;const pp=t.pnl_pct||0;const isW=(t.status||"").toLowerCase().includes("tp");return`<tr><td style="font-weight:800;color:var(--text)">${t.symbol}</td><td class="${t.direction==="BUY"?"buy":"sell"}">${t.direction}</td><td>${fmt(t.entry)}</td><td style="color:var(--yellow)">${fmt(t.close_price||t.exit_price||"–")}</td><td style="color:var(--red)">${fmt(t.sl)}</td><td style="color:var(--green)">${fmt(t.tp)}</td><td style="color:var(--yellow)">${t.rr}R</td><td class="pos-pnl ${pv>=0?"pos":"neg"}">${pv>=0?"+":""}${pv.toFixed(2)}</td><td class="pos-pnl ${pp>=0?"pos":"neg"}">${pp>=0?"+":""}${pp.toFixed(2)}%</td><td style="color:${scoreColor(t.score||0)};font-family:'Fredoka One',sans-serif">${t.grade||"–"}</td><td style="color:${isW?"var(--green)":"var(--red)"};font-size:.62rem">${t.status||"–"}</td><td style="color:var(--dim)">${(t.opened_at||"").replace(" UTC","")}</td><td><button class="action-btn share-btn" onclick="showTradeCard(window._histData[${i}],false,'LIVE')">📸</button></td></tr>`;}).join("")}</tbody></table></div>`;}catch{}}
 window.showTradeCard=function(t,isOpen,tradingType){
   if(!t)return;
   const dir=t.direction==="BUY"?"BUY":"SELL";
@@ -5256,9 +5285,9 @@ const wr=stats.total>0?Math.round(stats.wins/stats.total*100):0;$("ps-wr").textC
 const pnl=stats.total_pnl||0;const pnlEl=$("ps-pnl");pnlEl.textContent=(pnl>=0?"+":"")+pnl.toFixed(2);pnlEl.style.color=pnl>=0?"var(--green)":"var(--red)";
 $("ps-open").textContent=trades.length;$("paper-trades-count").textContent=`(${trades.length})`;
 // Open positions
-const ptWrap=$("paper-trades-wrap");if(ptWrap){if(!trades.length){ptWrap.innerHTML='<div class="empty" style="padding:40px"><div class="empty-ico">📝</div><div class="empty-t">No open paper trades</div><div class="empty-s">Enable paper trading and turn on auto-trade to place trades from signals automatically</div></div>';}else{window._paperTradesData=trades;ptWrap.innerHTML=`<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Pair</th><th>Dir</th><th>Entry Price</th><th>Current Price</th><th>SL</th><th>TP</th><th>RR</th><th>Risk $</th><th>Live PnL</th><th>PnL %</th><th>Grade</th><th>Card</th><th>Action</th></tr></thead><tbody>${trades.map((t,i)=>{const pv=t.pnl||0;const pp=t.pnl_pct||0;return`<tr><td style="font-weight:800">${t.symbol}</td><td class="${t.direction==="BUY"?"buy":"sell"}">${t.direction}</td><td>${fmt(t.entry)}</td><td style="color:var(--yellow)">${fmt(t.current_price)}</td><td style="color:var(--red)">${fmt(t.sl)}</td><td style="color:var(--green)">${fmt(t.tp)}</td><td style="color:var(--yellow)">${t.rr}R</td><td>$${t.risk_amount}</td><td class="pos-pnl ${pv>=0?"pos":"neg"}">${pv>=0?"+":""}${pv.toFixed(2)}</td><td class="pos-pnl ${pp>=0?"pos":"neg"}">${pp>=0?"+":""}${pp.toFixed(2)}%</td><td style="color:${scoreColor(t.score||0)};font-family:'Fredoka One',sans-serif">${t.grade||"–"}</td><td><button class="action-btn share-btn" onclick="showTradeCard(window._paperTradesData[${i}],true,'PAPER')">📸</button></td><td><button class="action-btn close-btn" onclick="closePaperTrade('${t.symbol}')">✕</button></td></tr>`;}).join("")}</tbody></table></div>`;}}
+const ptWrap=$("paper-trades-wrap");if(ptWrap){if(!trades.length){ptWrap.innerHTML='<div class="empty" style="padding:40px"><div class="empty-ico">📝</div><div class="empty-t">No open paper trades</div><div class="empty-s">Enable paper trading and turn on auto-trade to place trades from signals automatically</div></div>';}else{_buildOpenCards(trades,"paper-trades-wrap",null,null,false);}}
 // History
-const phWrap=$("paper-history-wrap");if(phWrap){if(!hist.length){phWrap.innerHTML='<div class="empty" style="padding:30px"><div class="empty-ico">📭</div><div class="empty-t">No paper trades yet</div></div>';}else{window._paperHistData=hist;_buildMexcCards(hist,"paper-history-wrap");}}
+const phWrap=$("paper-history-wrap");if(phWrap){if(!hist.length){phWrap.innerHTML='<div class="empty" style="padding:30px"><div class="empty-ico">📭</div><div class="empty-t">No paper trades yet</div></div>';}else{window._paperHistData=hist;phWrap.innerHTML=`<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Pair</th><th>Dir</th><th>Entry Price</th><th>Exit Price</th><th>SL</th><th>TP</th><th>RR</th><th>PnL $</th><th>PnL %</th><th>Grade</th><th>Status</th><th>Opened</th><th>Card</th></tr></thead><tbody>${hist.map((t,i)=>{const pv=t.pnl||0;const pp=t.pnl_pct||0;const isW=(t.status||"").toLowerCase().includes("tp");return`<tr><td style="font-weight:800">${t.symbol}</td><td class="${t.direction==="BUY"?"buy":"sell"}">${t.direction}</td><td>${fmt(t.entry)}</td><td style="color:var(--yellow)">${fmt(t.close_price||"–")}</td><td style="color:var(--red)">${fmt(t.sl)}</td><td style="color:var(--green)">${fmt(t.tp)}</td><td style="color:var(--yellow)">${t.rr}R</td><td class="pos-pnl ${pv>=0?"pos":"neg"}">${pv>=0?"+":""}${pv.toFixed(2)}</td><td class="pos-pnl ${pp>=0?"pos":"neg"}">${pp>=0?"+":""}${pp.toFixed(2)}%</td><td style="color:${scoreColor(t.score||0)};font-family:'Fredoka One',sans-serif">${t.grade||"–"}</td><td style="color:${isW?"var(--green)":"var(--red)"};font-size:.62rem">${t.status||"–"}</td><td style="color:var(--dim)">${(t.opened_at||"").replace(" UTC","")}</td><td><button class="action-btn share-btn" onclick="showTradeCard(window._paperHistData[${i}],false,'PAPER')">📸</button></td></tr>`;}).join("")}</tbody></table></div>`;}}
 }catch(e){console.error("Paper data error:",e);}}
 
 async function fetchDiag(){try{const r=await fetch("/api/diag");const d=await r.json();const labels={neutral:"😴 Neutral",not_continuous:"📉 Structure",no_obs:"📦 No OBs",not_at_key:"🎯 Not Key",not_in_zone:"📍 Zone",not_tapping:"👆 Tapping",no_crts:"🕯 No Setup",no_tbs:"🐢 No TBS",rr_low:"📊 Low RR","1d_no_crts":"1D No Setup","1d_no_tbs":"1D NoTBS","1d_rr_low":"1D LowRR",passed:"✅ PASSED",outbound_ip:"🌐 IP",key_last4:"🔑 Key",secret_ok:"🔒 Secret",trade_mode:"⚙️ Mode",auto_trade:"🤖 Auto",mexc_ping:"📡 MEXC Ping",auth_test:"🔐 Auth",balance_usdt:"💰 Balance"};const colors={neutral:"var(--dim)",not_continuous:"var(--dim)",no_obs:"var(--orange)",not_at_key:"var(--orange)",not_in_zone:"var(--orange)",not_tapping:"var(--red)",no_crts:"var(--red)",no_tbs:"var(--red)",rr_low:"var(--orange)","1d_no_crts":"var(--dim)","1d_no_tbs":"var(--dim)","1d_rr_low":"var(--dim)",passed:"var(--green)",outbound_ip:"var(--cyan)",key_last4:"var(--cyan)",secret_ok:"var(--cyan)",trade_mode:"var(--cyan)",auto_trade:"var(--cyan)",mexc_ping:"var(--cyan)",auth_test:"var(--cyan)",balance_usdt:"var(--green)"};const grid=$("diag-grid");if(grid)grid.innerHTML=Object.entries(d).map(([k,v])=>{const isTrading=["outbound_ip","key_last4","secret_ok","trade_mode","auto_trade","mexc_ping","auth_test","balance_usdt"].includes(k);const style=isTrading?"border-color:rgba(6,182,212,.3);background:rgba(6,182,212,.04)":"";const valColor=colors[k]||"var(--text)";const dispVal=typeof v==="object"?"[object]":String(v);const fontSize=dispVal.length>12?"0.75rem":dispVal.length>8?"0.95rem":"1.6rem";return`<div class="dg" style="${style}"><div class="dg-lbl">${labels[k]||k}</div><div class="dg-val" style="color:${valColor};font-size:${fontSize}">${dispVal}</div></div>`;}).join("");}catch{}}
