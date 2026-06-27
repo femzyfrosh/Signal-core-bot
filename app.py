@@ -5059,6 +5059,46 @@ function _oCol(label, value, color) {
   + "</div>";
 }
 
+
+// Update PnL/price in existing cards without rebuilding DOM
+function _updateOpenCards(pnlMap) {
+  document.querySelectorAll(".oc-pnl").forEach(function(el) {
+    var sym = el.getAttribute("data-sym");
+    var live = pnlMap[sym];
+    if (!live) return;
+    var pv = live.pnl || 0;
+    var roi = live.roi_pct || 0;
+    var pvSign = pv >= 0 ? "+" : "";
+    var roiSign = roi >= 0 ? "+" : "";
+    el.style.color = pv >= 0 ? "#10b981" : "#ef4444";
+    el.innerHTML = pvSign + pv.toFixed(3) + ' <span style="font-size:.78rem">[' + roiSign + roi.toFixed(2) + '%]</span>';
+  });
+  document.querySelectorAll(".oc-cur").forEach(function(el) {
+    var sym = el.getAttribute("data-sym");
+    var live = pnlMap[sym];
+    if (!live || !live.current) return;
+    el.textContent = fmt(live.current);
+  });
+}
+
+// Update paper trade PnL in existing cards without rebuilding DOM
+function _updatePaperCards(trades) {
+  trades.forEach(function(t) {
+    var pv = t.pnl || 0;
+    var roi = t.pnl_pct || 0;
+    var pvSign = pv >= 0 ? "+" : "";
+    var roiSign = roi >= 0 ? "+" : "";
+    // Find matching pnl span by data-sym
+    var pnlEl = document.querySelector(".oc-pnl[data-sym='" + t.symbol + "']");
+    if (pnlEl) {
+      pnlEl.style.color = pv >= 0 ? "#10b981" : "#ef4444";
+      pnlEl.innerHTML = pvSign + pv.toFixed(3) + ' <span style="font-size:.78rem">[' + roiSign + roi.toFixed(2) + '%]</span>';
+    }
+    var curEl = document.querySelector(".oc-cur[data-sym='" + t.symbol + "']");
+    if (curEl && t.current_price) curEl.textContent = fmt(t.current_price);
+  });
+}
+
 function _buildOpenCards(trades, wrapId, countId, pnlMap, isLive) {
   var wrap = $(wrapId);
   if (!wrap) return;
@@ -5125,7 +5165,7 @@ function _buildOpenCards(trades, wrapId, countId, pnlMap, isLive) {
       // Row 2: Avg Price | Fair Price | Liq Price
       + "<div style=\"display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px\">"
         + _oCol("Avg. Price", fmt(t.entry), "var(--text)")
-        + _oCol("Fair Price", fairPrice, "var(--text)")
+        + "<div style=\"background:rgba(0,0,0,.2);border-radius:8px;padding:7px 8px\">"  + "<div style=\"font-size:.55rem;color:var(--dim);font-family:'JetBrains Mono',monospace;margin-bottom:3px\">Fair Price</div>"  + "<div class=\"oc-cur\" data-sym=\"" + t.symbol + "\" style=\"font-size:.72rem;font-weight:700;color:var(--text);font-family:'JetBrains Mono',monospace\">" + fairPrice + "</div>"+ "</div>"
         + _oCol("Liq. Price", liqPrice, "#ef4444")
       + "</div>"
       // TP/SL line
@@ -5149,7 +5189,7 @@ function _buildOpenCards(trades, wrapId, countId, pnlMap, isLive) {
   wrap.innerHTML = html;
 }
 
-window.fetchPnl=async function(){const onTrades=activeTab==="trades",onCfg=activeTab==="trade-cfg";if(!onTrades&&!onCfg)return;try{const[tr,pnl,hist]=await Promise.all([fetch("/api/trades").then(r=>r.json()),fetch("/api/pnl").then(r=>r.json()),fetch("/api/recent-trades").then(r=>r.json())]);const pnlMap={};(pnl.positions||[]).forEach(p=>pnlMap[p.symbol]=p);const buildOpenTable=function(trades,wrapId,countId){_buildOpenCards(trades,wrapId,countId,pnlMap,true);};const buildHistTable=function(data,wrapId){const wrap=$(wrapId);if(!wrap)return;if(!data.length){wrap.innerHTML='<div class="empty" style="padding:40px"><div class="empty-ico">📭</div><div class="empty-t">No completed trades yet</div></div>';return;}window._histData=data;wrap.innerHTML=`<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Pair</th><th>Dir</th><th>Entry Price</th><th>Exit Price</th><th>SL</th><th>TP</th><th>RR</th><th>PnL $</th><th>PnL %</th><th>Grade</th><th>Status</th><th>Opened</th><th>Card</th></tr></thead><tbody>${data.map((t,i)=>{const pv=t.pnl||0;const pp=t.pnl_pct||0;const isW=(t.status||"").toLowerCase().includes("tp");return`<tr><td style="font-weight:800;color:var(--text)">${t.symbol}</td><td class="${t.direction==="BUY"?"buy":"sell"}">${t.direction}</td><td>${fmt(t.entry)}</td><td style="color:var(--yellow)">${fmt(t.close_price||t.exit_price||"–")}</td><td style="color:var(--red)">${fmt(t.sl)}</td><td style="color:var(--green)">${fmt(t.tp)}</td><td style="color:var(--yellow)">${t.rr}R</td><td class="pos-pnl ${pv>=0?"pos":"neg"}">${pv>=0?"+":""}${pv.toFixed(2)}</td><td class="pos-pnl ${pp>=0?"pos":"neg"}">${pp>=0?"+":""}${pp.toFixed(2)}%</td><td style="color:${scoreColor(t.score||0)};font-family:'Fredoka One',sans-serif">${t.grade||"–"}</td><td style="color:${isW?"var(--green)":"var(--red)"};font-size:.62rem">${t.status||"–"}</td><td style="color:var(--dim)">${(t.opened_at||"").replace(" UTC","")}</td><td><button class="action-btn share-btn" onclick="showTradeCard(window._histData[${i}],false,'LIVE')">📸</button></td></tr>`;}).join("")}</tbody></table></div>`;};buildOpenTable(tr,"live-trades-wrap","trades-count");buildOpenTable(tr,"live-trades-wrap2","live-pos-count");buildHistTable(hist,"history-wrap2");}catch{}};
+window.fetchPnl=async function(){const onTrades=activeTab==="trades",onCfg=activeTab==="trade-cfg",onOpen=activeTab==="trade-open";if(!onTrades&&!onCfg&&!onOpen)return;try{const[tr,pnl,hist]=await Promise.all([fetch("/api/trades").then(r=>r.json()),fetch("/api/pnl").then(r=>r.json()),fetch("/api/recent-trades").then(r=>r.json())]);const pnlMap={};(pnl.positions||[]).forEach(p=>pnlMap[p.symbol]=p);const buildOpenTable=function(trades,wrapId,countId){_buildOpenCards(trades,wrapId,countId,pnlMap,true);};const buildHistTable=function(data,wrapId){const wrap=$(wrapId);if(!wrap)return;if(!data.length){wrap.innerHTML='<div class="empty" style="padding:40px"><div class="empty-ico">📭</div><div class="empty-t">No completed trades yet</div></div>';return;}window._histData=data;wrap.innerHTML=`<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Pair</th><th>Dir</th><th>Entry Price</th><th>Exit Price</th><th>SL</th><th>TP</th><th>RR</th><th>PnL $</th><th>PnL %</th><th>Grade</th><th>Status</th><th>Opened</th><th>Card</th></tr></thead><tbody>${data.map((t,i)=>{const pv=t.pnl||0;const pp=t.pnl_pct||0;const isW=(t.status||"").toLowerCase().includes("tp");return`<tr><td style="font-weight:800;color:var(--text)">${t.symbol}</td><td class="${t.direction==="BUY"?"buy":"sell"}">${t.direction}</td><td>${fmt(t.entry)}</td><td style="color:var(--yellow)">${fmt(t.close_price||t.exit_price||"–")}</td><td style="color:var(--red)">${fmt(t.sl)}</td><td style="color:var(--green)">${fmt(t.tp)}</td><td style="color:var(--yellow)">${t.rr}R</td><td class="pos-pnl ${pv>=0?"pos":"neg"}">${pv>=0?"+":""}${pv.toFixed(2)}</td><td class="pos-pnl ${pp>=0?"pos":"neg"}">${pp>=0?"+":""}${pp.toFixed(2)}%</td><td style="color:${scoreColor(t.score||0)};font-family:'Fredoka One',sans-serif">${t.grade||"–"}</td><td style="color:${isW?"var(--green)":"var(--red)"};font-size:.62rem">${t.status||"–"}</td><td style="color:var(--dim)">${(t.opened_at||"").replace(" UTC","")}</td><td><button class="action-btn share-btn" onclick="showTradeCard(window._histData[${i}],false,'LIVE')">📸</button></td></tr>`;}).join("")}</tbody></table></div>`;};buildOpenTable(tr,"live-trades-wrap","trades-count");buildOpenTable(tr,"live-trades-wrap2","live-pos-count");_updateOpenCards(pnlMap);buildHistTable(hist,"history-wrap2");}catch{}};
 async function fetchHistory(){if(activeTab!=="history")return;try{const r=await fetch("/api/recent-trades");const data=await r.json();const wrap=$("history-wrap");if(!wrap)return;if(!data.length){wrap.innerHTML='<div class="empty" style="padding:40px"><div class="empty-ico">📭</div><div class="empty-t">No completed trades yet</div></div>';return;}window._histData=data;wrap.innerHTML=`<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Pair</th><th>Dir</th><th>Entry Price</th><th>Exit Price</th><th>SL</th><th>TP</th><th>RR</th><th>PnL $</th><th>PnL %</th><th>Grade</th><th>Status</th><th>Opened</th><th>Card</th></tr></thead><tbody>${data.map((t,i)=>{const pv=t.pnl||0;const pp=t.pnl_pct||0;const isW=(t.status||"").toLowerCase().includes("tp");return`<tr><td style="font-weight:800;color:var(--text)">${t.symbol}</td><td class="${t.direction==="BUY"?"buy":"sell"}">${t.direction}</td><td>${fmt(t.entry)}</td><td style="color:var(--yellow)">${fmt(t.close_price||t.exit_price||"–")}</td><td style="color:var(--red)">${fmt(t.sl)}</td><td style="color:var(--green)">${fmt(t.tp)}</td><td style="color:var(--yellow)">${t.rr}R</td><td class="pos-pnl ${pv>=0?"pos":"neg"}">${pv>=0?"+":""}${pv.toFixed(2)}</td><td class="pos-pnl ${pp>=0?"pos":"neg"}">${pp>=0?"+":""}${pp.toFixed(2)}%</td><td style="color:${scoreColor(t.score||0)};font-family:'Fredoka One',sans-serif">${t.grade||"–"}</td><td style="color:${isW?"var(--green)":"var(--red)"};font-size:.62rem">${t.status||"–"}</td><td style="color:var(--dim)">${(t.opened_at||"").replace(" UTC","")}</td><td><button class="action-btn share-btn" onclick="showTradeCard(window._histData[${i}],false,'LIVE')">📸</button></td></tr>`;}).join("")}</tbody></table></div>`;}catch{}}
 window.showTradeCard=function(t,isOpen,tradingType){
   if(!t)return;
@@ -5285,7 +5325,7 @@ const wr=stats.total>0?Math.round(stats.wins/stats.total*100):0;$("ps-wr").textC
 const pnl=stats.total_pnl||0;const pnlEl=$("ps-pnl");pnlEl.textContent=(pnl>=0?"+":"")+pnl.toFixed(2);pnlEl.style.color=pnl>=0?"var(--green)":"var(--red)";
 $("ps-open").textContent=trades.length;$("paper-trades-count").textContent=`(${trades.length})`;
 // Open positions
-const ptWrap=$("paper-trades-wrap");if(ptWrap){if(!trades.length){ptWrap.innerHTML='<div class="empty" style="padding:40px"><div class="empty-ico">📝</div><div class="empty-t">No open paper trades</div><div class="empty-s">Enable paper trading and turn on auto-trade to place trades from signals automatically</div></div>';}else{_buildOpenCards(trades,"paper-trades-wrap",null,null,false);}}
+const ptWrap=$("paper-trades-wrap");if(ptWrap){if(!trades.length){ptWrap.innerHTML='<div class="empty" style="padding:40px"><div class="empty-ico">📝</div><div class="empty-t">No open paper trades</div><div class="empty-s">Enable paper trading and turn on auto-trade to place trades from signals automatically</div></div>';}else{_buildOpenCards(trades,"paper-trades-wrap",null,null,false);_updatePaperCards(trades);}}
 // History
 const phWrap=$("paper-history-wrap");if(phWrap){if(!hist.length){phWrap.innerHTML='<div class="empty" style="padding:30px"><div class="empty-ico">📭</div><div class="empty-t">No paper trades yet</div></div>';}else{window._paperHistData=hist;phWrap.innerHTML=`<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Pair</th><th>Dir</th><th>Entry Price</th><th>Exit Price</th><th>SL</th><th>TP</th><th>RR</th><th>PnL $</th><th>PnL %</th><th>Grade</th><th>Status</th><th>Opened</th><th>Card</th></tr></thead><tbody>${hist.map((t,i)=>{const pv=t.pnl||0;const pp=t.pnl_pct||0;const isW=(t.status||"").toLowerCase().includes("tp");return`<tr><td style="font-weight:800">${t.symbol}</td><td class="${t.direction==="BUY"?"buy":"sell"}">${t.direction}</td><td>${fmt(t.entry)}</td><td style="color:var(--yellow)">${fmt(t.close_price||"–")}</td><td style="color:var(--red)">${fmt(t.sl)}</td><td style="color:var(--green)">${fmt(t.tp)}</td><td style="color:var(--yellow)">${t.rr}R</td><td class="pos-pnl ${pv>=0?"pos":"neg"}">${pv>=0?"+":""}${pv.toFixed(2)}</td><td class="pos-pnl ${pp>=0?"pos":"neg"}">${pp>=0?"+":""}${pp.toFixed(2)}%</td><td style="color:${scoreColor(t.score||0)};font-family:'Fredoka One',sans-serif">${t.grade||"–"}</td><td style="color:${isW?"var(--green)":"var(--red)"};font-size:.62rem">${t.status||"–"}</td><td style="color:var(--dim)">${(t.opened_at||"").replace(" UTC","")}</td><td><button class="action-btn share-btn" onclick="showTradeCard(window._paperHistData[${i}],false,'PAPER')">📸</button></td></tr>`;}).join("")}</tbody></table></div>`;}}
 }catch(e){console.error("Paper data error:",e);}}
