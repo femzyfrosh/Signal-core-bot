@@ -5097,38 +5097,155 @@ function _updatePaperCards(trades) {
   });
 }
 
-// ── Fetch live price from MEXC public API and update paper cards ─────
-async function _patchPaperPrices(trades) {
-  var syms = trades.map(function(t){return t.symbol.replace("_","");});
-  if (!syms.length) return;
+// ── Real-time PnL via MEXC WebSocket ────────────────────────────────
+// Connects to MEXC public futures WS, subscribes to ticker for each
+// open pair, and updates PnL + Market Price spans every price tick.
+var _wsConn = null;
+var _wsSyms = [];   // symbols currently subscribed
+var _wsTrades = {}; // symbol → trade meta (entry, risk, direction, leverage)
+
+function _startPriceWS(trades) {
+  // Build map of trade data needed for PnL calc
+  _wsTrades = {};
+  trades.forEach(function(t) {
+    _wsTrades[t.symbol] = {
+      entry:     parseFloat(t.entry) || 0,
+      risk:      parseFloat(t.risk_amount) || 0,
+      lev:       parseFloat(t.leverage) || 1,
+      isLong:    t.direction === "BUY",
+    };
+  });
+
+  var syms = Object.keys(_wsTrades);
+  if (!syms.length) { _stopPriceWS(); return; }
+
+  // If already connected with same symbols, nothing to do
+  var same = syms.length === _wsSyms.length && syms.every(function(s){ return _wsSyms.indexOf(s) >= 0; });
+  if (_wsConn && _wsConn.readyState === WebSocket.OPEN && same) return;
+
+  _stopPriceWS();
+  _wsSyms = syms;
+
   try {
-    var url = "https://contract.mexc.com/api/v1/contract/ticker?symbol=" + syms[0];
-    // For multiple symbols, fetch individually (public, no auth needed)
-    await Promise.all(trades.map(async function(t) {
+    // MEXC public futures WebSocket — no auth needed
+    var ws = new WebSocket("wss://contract.mexc.com/edge");
+    _wsConn = ws;
+
+    ws.onopen = function() {
+      // Subscribe to ticker for each open pair
+      syms.forEach(function(sym) {
+        var mexcSym = sym.replace("_", "");   // BTC_USDT → BTCUSDT
+        ws.send(JSON.stringify({
+          method: "sub.ticker",
+          param:  { symbol: mexcSym }
+        }));
+      });
+    };
+
+    ws.onmessage = function(evt) {
       try {
-        var sym = t.symbol.replace("_","");
-        var r = await fetch("https://contract.mexc.com/api/v1/contract/ticker?symbol=" + sym, {signal:AbortSignal.timeout(4000)});
-        if (!r.ok) return;
-        var d = await r.json();
-        var price = d.data && d.data.lastPrice ? parseFloat(d.data.lastPrice) : 0;
+        var msg = JSON.parse(evt.data);
+        // MEXC ticker channel: {channel:"push.ticker", data:{symbol:"BTCUSDT", lastPrice:...}}
+        if (!msg || msg.channel !== "push.ticker" || !msg.data) return;
+        var d = msg.data;
+        var price = parseFloat(d.lastPrice || d.last || 0);
         if (!price) return;
-        // Recalculate pnl on the fly
-        var entry = t.entry || 0;
-        var riskAmt = t.risk_amount || 0;
-        var isLong = t.direction === "BUY";
-        var pnl = isLong ? (price - entry) / entry * riskAmt * (t.leverage||1) 
-                         : (entry - price) / entry * riskAmt * (t.leverage||1);
-        var roi = riskAmt ? (pnl / riskAmt) * 100 : 0;
-        var pnlEl = document.querySelector(".oc-pnl[data-sym=\"" + t.symbol + "\"]");
-        if (pnlEl) {
-          pnlEl.style.color = pnl>=0?"#10b981":"#ef4444";
-          pnlEl.innerHTML = (pnl>=0?"+":"") + pnl.toFixed(3) + " <span style=\"font-size:.78rem\">[" + (roi>=0?"+":"") + roi.toFixed(2) + "%]</span>";
+
+        // Convert MEXC symbol back to our format (BTCUSDT → BTC_USDT)
+        // Try both with and without underscore
+        var rawSym = d.symbol || "";
+        var ourSym = rawSym; // might already match
+        if (!_wsTrades[ourSym]) {
+          // Try inserting underscore before USDT
+          ourSym = rawSym.replace(/USDT$/, "_USDT");
         }
-        var curEl = document.querySelector(".oc-cur[data-sym=\"" + t.symbol + "\"]");
+        var td = _wsTrades[ourSym];
+        if (!td) return;
+
+        // Calculate unrealized PnL
+        var pnl = td.isLong
+          ? (price - td.entry) / td.entry * td.risk * td.lev
+          : (td.entry - price) / td.entry * td.risk * td.lev;
+        var roi = td.risk > 0 ? (pnl / td.risk) * 100 : 0;
+
+        // Patch PnL span
+        var pnlEl = document.querySelector(".oc-pnl[data-sym=\"" + ourSym + "\"]");
+        if (pnlEl) {
+          pnlEl.style.color = pnl >= 0 ? "#10b981" : "#ef4444";
+          pnlEl.innerHTML = (pnl>=0?"+":"") + pnl.toFixed(3)
+            + " <span style=\"font-size:.78rem\">[" + (roi>=0?"+":"") + roi.toFixed(2) + "%]</span>";
+        }
+        // Patch market price span
+        var curEl = document.querySelector(".oc-cur[data-sym=\"" + ourSym + "\"]");
         if (curEl) curEl.textContent = fmt(price);
+
       } catch(e) {}
-    }));
-  } catch(e) {}
+    };
+
+    ws.onerror = function() {
+      // Silently fall back to REST polling on WS error
+    };
+
+    ws.onclose = function() {
+      // Auto-reconnect after 3s if we still have open trades
+      if (Object.keys(_wsTrades).length > 0) {
+        setTimeout(function() {
+          if (Object.keys(_wsTrades).length > 0) _startPriceWS(Object.values(_wsTrades).length ? trades : []);
+        }, 3000);
+      }
+    };
+
+    // Keep-alive ping every 15s (MEXC requires it)
+    var pingInterval = setInterval(function() {
+      if (!_wsConn || _wsConn.readyState !== WebSocket.OPEN) {
+        clearInterval(pingInterval); return;
+      }
+      _wsConn.send(JSON.stringify({method: "ping"}));
+    }, 15000);
+
+  } catch(e) {
+    // WS not supported — fall back to REST polling (already handled by fetchPaperData)
+  }
+}
+
+function _stopPriceWS() {
+  if (_wsConn) {
+    try { _wsConn.close(); } catch(e) {}
+    _wsConn = null;
+  }
+  _wsTrades = {};
+  _wsSyms = [];
+}
+
+// REST fallback — called once on card build, then WS takes over
+async function _patchPaperPrices(trades) {
+  // Start WebSocket for real-time updates
+  _startPriceWS(trades);
+
+  // Also do one immediate REST fetch so prices show before WS connects
+  await Promise.all(trades.map(async function(t) {
+    try {
+      var mexcSym = t.symbol.replace("_", "");
+      var r = await fetch("https://contract.mexc.com/api/v1/contract/ticker?symbol=" + mexcSym, {signal: AbortSignal.timeout(4000)});
+      if (!r.ok) return;
+      var d = await r.json();
+      var price = parseFloat((d.data && d.data.lastPrice) || 0);
+      if (!price) return;
+      var td = _wsTrades[t.symbol];
+      if (!td) return;
+      var pnl = td.isLong ? (price - td.entry) / td.entry * td.risk * td.lev
+                           : (td.entry - price) / td.entry * td.risk * td.lev;
+      var roi = td.risk > 0 ? (pnl / td.risk) * 100 : 0;
+      var pnlEl = document.querySelector(".oc-pnl[data-sym=\"" + t.symbol + "\"]");
+      if (pnlEl) {
+        pnlEl.style.color = pnl >= 0 ? "#10b981" : "#ef4444";
+        pnlEl.innerHTML = (pnl>=0?"+":"") + pnl.toFixed(3)
+          + " <span style=\"font-size:.78rem\">[" + (roi>=0?"+":"") + roi.toFixed(2) + "%]</span>";
+      }
+      var curEl = document.querySelector(".oc-cur[data-sym=\"" + t.symbol + "\"]");
+      if (curEl) curEl.textContent = fmt(price);
+    } catch(e) {}
+  }));
 }
 
 // ── Build open trade cards (MEXC style) ─────────────────────────────
@@ -5211,7 +5328,8 @@ function _buildOpenCards(trades, wrapId, countId, pnlMap, isLive) {
   });
   wrap.innerHTML = html;
   // For paper trades: immediately start fetching live prices from MEXC
-  if (!isLive && trades.length) _patchPaperPrices(trades);
+  // Start WebSocket price feed for ALL open trades (live + paper)
+  if (trades.length) _patchPaperPrices(trades);
 }
 
 // ── Build closed trade cards (MEXC Position History style) ───────────
